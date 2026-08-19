@@ -11,7 +11,10 @@ export function resolveRate(
 ): { rate: ModelRate; matched: boolean } {
   const name = model?.trim() ?? "";
   if (name) {
-    for (const [pattern, rate] of Object.entries(config.models)) {
+    const patterns = Object.entries(config.models).sort(
+      ([a], [b]) => patternSpecificity(b) - patternSpecificity(a),
+    );
+    for (const [pattern, rate] of patterns) {
       if (globToRegExp(pattern).test(name)) {
         const unconfigured = rate.inputPerMillion === 0 && rate.outputPerMillion === 0;
         if (unconfigured) {
@@ -22,6 +25,13 @@ export function resolveRate(
     }
   }
   return { rate: config.fallback, matched: false };
+}
+
+/** Prefer longer literal prefixes and fewer wildcards (e.g. gpt-4o over gpt-*). */
+export function patternSpecificity(pattern: string): number {
+  const stars = (pattern.match(/\*/g) ?? []).length;
+  const literals = pattern.replace(/\*/g, "").length;
+  return literals * 1000 - stars;
 }
 
 export function costUsd(

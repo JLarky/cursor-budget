@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DEFAULT_CONFIG } from "../config.js";
 import type { Usage } from "../accounting/types.js";
-import { evaluate, formatBlockMessage } from "./evaluator.js";
+import { DEFAULT_CONFIG } from "../config.js";
+import { evaluate, formatBlockMessage, formatUsd } from "./evaluator.js";
 
 const estimated = (tokens: number, usd: number): Usage => ({
   totalTokens: tokens,
@@ -99,4 +99,35 @@ test("block message includes session id", () => {
   const message = formatBlockMessage(decision, estimated(10, 2), estimated(10, 2), config, "21623392-2ebe-4a2a-b906-e012529de912");
   assert.match(message, /Session id: 21623392-2ebe-4a2a-b906-e012529de912/);
   assert.match(message, /cursor-budget except add 21623392-2ebe-4a2a-b906-e012529de912/);
+});
+
+test("formatUsd handles non-finite and sub-cent values", () => {
+  assert.equal(formatUsd(Number.NaN), "$?—");
+  assert.equal(formatUsd(0.006), "$0.006");
+  assert.equal(formatUsd(1.5), "$1.50");
+});
+
+test("formatBlockMessage does not throw on non-finite usage", () => {
+  const config = structuredClone(DEFAULT_CONFIG);
+  config.limits.rollingHour.usd = 1;
+  const decision = evaluate({
+    hour: estimated(10, Number.NaN),
+    day: estimated(10, Number.NaN),
+    config,
+    overrideUntil: null,
+  });
+  // Force a reason with non-finite numbers as if a bad config slipped through.
+  decision.allow = false;
+  decision.reasons = [
+    {
+      window: "rollingHour",
+      windowLabel: "Last 60 minutes",
+      metric: "usd",
+      used: Number.NaN as unknown as number,
+      limit: "5" as unknown as number,
+    },
+  ];
+  const message = formatBlockMessage(decision, estimated(10, Number.NaN), estimated(10, 0), config, "abc");
+  assert.match(message, /Session id: abc/);
+  assert.match(message, /\$\?—/);
 });

@@ -195,6 +195,22 @@ export function markWarning(
   ).run(windowId, threshold, periodKey, firedAt);
 }
 
-export function makeDedupeKey(generationId: string, eventType: string, content: string): string {
-  return createHash("sha256").update(`${generationId}\0${eventType}\0${content}`).digest("hex");
+export function makeDedupeKey(
+  generationId: string | undefined,
+  eventType: string,
+  content: string,
+  opts?: { conversationId?: string; timestamp?: string | Date },
+): string {
+  const gen = generationId?.trim() || "-";
+  let scope = gen;
+  // Without a generation id, identical content would collide forever. Scope by
+  // conversation + minute bucket so a later identical prompt still counts.
+  if (gen === "-") {
+    const ts = opts?.timestamp != null ? new Date(opts.timestamp) : new Date();
+    const minute = Number.isNaN(ts.getTime())
+      ? Math.floor(Date.now() / 60_000)
+      : Math.floor(ts.getTime() / 60_000);
+    scope = `${opts?.conversationId?.trim() || "-"}@${minute}`;
+  }
+  return createHash("sha256").update(`${scope}\0${eventType}\0${content}`).digest("hex");
 }

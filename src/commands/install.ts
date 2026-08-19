@@ -1,4 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureConfig } from "../config.js";
@@ -15,7 +16,7 @@ const HOOK_EVENTS = [
 
 export function installCommand(): string {
   ensureConfig();
-  const home = process.env.HOME;
+  const home = homedir();
   const wrapper = hookWrapperPath(home);
   const hooksPath = hooksJsonPath(home);
   const cli = join(fileURLToPath(new URL("../cli.js", import.meta.url)));

@@ -1,8 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import * as v from "valibot";
 import { budgetDir, configPath } from "./paths.js";
-
-export type Precision = "exact" | "estimated" | "observable";
 
 export interface Limit {
   usd: number | null;
@@ -62,51 +61,93 @@ export const DEFAULT_CONFIG: Config = {
   excludeConversationIds: [],
 };
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+const finiteNumber = v.pipe(v.number(), v.finite());
+const nonNegativeFinite = v.pipe(v.number(), v.finite(), v.minValue(0));
 
-function mergeLimit(base: Limit, raw: unknown): Limit {
-  if (!isObject(raw)) return base;
-  return {
-    usd: raw.usd === undefined ? base.usd : (raw.usd as number | null),
-    tokens: raw.tokens === undefined ? base.tokens : (raw.tokens as number | null),
-  };
+const LimitSchema = v.strictObject({
+  usd: v.nullable(nonNegativeFinite),
+  tokens: v.nullable(nonNegativeFinite),
+});
+
+const ModelRateSchema = v.strictObject({
+  inputPerMillion: nonNegativeFinite,
+  outputPerMillion: nonNegativeFinite,
+  reasoningPerMillion: v.optional(nonNegativeFinite),
+});
+
+const ConfigFileSchema = v.strictObject({
+  limits: v.optional(
+    v.strictObject({
+      rollingHour: v.optional(LimitSchema),
+      calendarDay: v.optional(LimitSchema),
+    }),
+  ),
+  accounting: v.optional(
+    v.strictObject({
+      provider: v.optional(v.literal("local")),
+      safetyMultiplier: v.optional(v.pipe(finiteNumber, v.minValue(0))),
+    }),
+  ),
+  warnings: v.optional(v.array(v.pipe(finiteNumber, v.minValue(0), v.maxValue(1)))),
+  unknownModel: v.optional(v.picklist(["fallback", "block"] as const)),
+  enforcement: v.optional(
+    v.strictObject({
+      failClosed: v.optional(v.boolean()),
+    }),
+  ),
+  models: v.optional(v.record(v.string(), ModelRateSchema)),
+  fallback: v.optional(ModelRateSchema),
+  excludeConversationIds: v.optional(v.array(v.string())),
+});
+
+export class ConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConfigError";
+  }
 }
 
 export function parseConfig(raw: unknown): Config {
-  const src = isObject(raw) ? raw : {};
-  const limits = isObject(src.limits) ? src.limits : {};
-  const accounting = isObject(src.accounting) ? src.accounting : {};
-  const enforcement = isObject(src.enforcement) ? src.enforcement : {};
+  let parsed: v.InferOutput<typeof ConfigFileSchema>;
+  try {
+    parsed = v.parse(ConfigFileSchema, raw);
+  } catch (error) {
+    if (error instanceof v.ValiError) {
+      throw new ConfigError(`Invalid config.json:\n${v.summarize(error.issues)}`);
+    }
+    throw error;
+  }
+
   return {
     limits: {
-      rollingHour: mergeLimit(DEFAULT_CONFIG.limits.rollingHour, limits.rollingHour),
-      calendarDay: mergeLimit(DEFAULT_CONFIG.limits.calendarDay, limits.calendarDay),
+      rollingHour: {
+        ...DEFAULT_CONFIG.limits.rollingHour,
+        ...parsed.limits?.rollingHour,
+      },
+      calendarDay: {
+        ...DEFAULT_CONFIG.limits.calendarDay,
+        ...parsed.limits?.calendarDay,
+      },
     },
     accounting: {
       provider: "local",
       safetyMultiplier:
-        typeof accounting.safetyMultiplier === "number"
-          ? accounting.safetyMultiplier
-          : DEFAULT_CONFIG.accounting.safetyMultiplier,
+        parsed.accounting?.safetyMultiplier ?? DEFAULT_CONFIG.accounting.safetyMultiplier,
     },
-    warnings: Array.isArray(src.warnings)
-      ? src.warnings.filter((n): n is number => typeof n === "number")
-      : DEFAULT_CONFIG.warnings,
-    unknownModel: src.unknownModel === "block" ? "block" : "fallback",
+    warnings: parsed.warnings ?? DEFAULT_CONFIG.warnings,
+    unknownModel: parsed.unknownModel ?? DEFAULT_CONFIG.unknownModel,
     enforcement: {
-      failClosed: enforcement.failClosed === true,
+      failClosed: parsed.enforcement?.failClosed ?? DEFAULT_CONFIG.enforcement.failClosed,
     },
-    models: isObject(src.models)
-      ? (src.models as Config["models"])
-      : DEFAULT_CONFIG.models,
-    fallback: isObject(src.fallback)
-      ? { ...DEFAULT_CONFIG.fallback, ...(src.fallback as unknown as ModelRate) }
-      : DEFAULT_CONFIG.fallback,
-    excludeConversationIds: Array.isArray(src.excludeConversationIds)
-      ? src.excludeConversationIds.filter((id): id is string => typeof id === "string")
-      : [],
+    models: {
+      ...DEFAULT_CONFIG.models,
+      ...(parsed.models ?? {}),
+    },
+    fallback: {
+      ...DEFAULT_CONFIG.fallback,
+      ...parsed.fallback,
+    },
+    excludeConversationIds: parsed.excludeConversationIds ?? [],
   };
 }
 
@@ -116,13 +157,22 @@ export function ensureConfig(home?: string): Config {
   mkdirSync(budgetDir(home), { recursive: true });
   if (!existsSync(path)) {
     writeFileSync(path, `${JSON.stringify(DEFAULT_CONFIG, null, 2)}\n`);
-    return DEFAULT_CONFIG;
+    return structuredClone(DEFAULT_CONFIG);
   }
-  return parseConfig(JSON.parse(readFileSync(path, "utf8")));
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new ConfigError(`Invalid config.json (not JSON): ${detail}`);
+  }
+  return parseConfig(raw);
 }
 
 export function writeConfig(config: Config, home?: string): void {
   const path = configPath(home);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+  // Round-trip through the schema so we never write unknown or invalid fields.
+  const validated = parseConfig(config);
+  writeFileSync(path, `${JSON.stringify(validated, null, 2)}\n`);
 }

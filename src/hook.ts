@@ -1,11 +1,10 @@
 import { getProvider } from "./accounting/index.js";
 import type { CursorHookEvent, Usage } from "./accounting/types.js";
-import { evaluate, formatBlockMessage } from "./budget/evaluator.js";
+import { evaluate, formatBlockMessage, formatPercent, formatUsd } from "./budget/evaluator.js";
 import { activeWindows, calendarDay, rollingHour } from "./budget/windows.js";
 import type { Config } from "./config.js";
 import { ensureConfig } from "./config.js";
 import { getState, hasWarning, markWarning, openDb } from "./db/client.js";
-import { formatPercent, formatUsd } from "./budget/evaluator.js";
 import { notify } from "./notify.js";
 import { resolveRate } from "./pricing.js";
 
@@ -18,7 +17,9 @@ const ENFORCE_EVENTS = new Set([
   "subagentStart",
 ]);
 
-const RECORD_EVENTS = new Set(["beforeSubmitPrompt", "afterAgentThought", "afterAgentResponse", "preCompact"]);
+const RECORD_EVENTS = new Set(["afterAgentThought", "afterAgentResponse", "preCompact"]);
+
+const STDIN_TIMEOUT_MS = 2_000;
 
 export interface HookResponse {
   continue: boolean;
@@ -27,15 +28,31 @@ export interface HookResponse {
   agent_message?: string;
 }
 
-export async function handleHook(event: CursorHookEvent, config = ensureConfig()): Promise<HookResponse> {
+export async function handleHook(event: CursorHookEvent, config?: Config): Promise<HookResponse> {
   const eventName = String(event.hook_event_name ?? "");
   const conversationId = event.conversation_id ?? "";
-  const excluded = config.excludeConversationIds.includes(conversationId);
+
+  // Load config inside the handler so a bad config.json cannot bypass the catch
+  // via a default-parameter throw and silently fail open in the CLI wrapper.
+  let resolved: Config;
+  try {
+    resolved = config ?? ensureConfig();
+  } catch (error) {
+    if (ENFORCE_EVENTS.has(eventName)) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return deny(
+        `cursor-budget failed to load config: ${detail}\nSession id: ${conversationId || "unknown"}`,
+      );
+    }
+    return allow();
+  }
+
+  const excluded = resolved.excludeConversationIds.includes(conversationId);
 
   try {
-    return await dispatch(event, eventName, excluded, config);
+    return await dispatch(event, eventName, excluded, resolved);
   } catch (error) {
-    if (config.enforcement.failClosed && ENFORCE_EVENTS.has(eventName) && !excluded) {
+    if (resolved.enforcement.failClosed && ENFORCE_EVENTS.has(eventName) && !excluded) {
       const message = `cursor-budget failed closed: ${error instanceof Error ? error.message : String(error)}\nSession id: ${conversationId || "unknown"}`;
       return deny(message);
     }
@@ -147,15 +164,43 @@ function deny(message: string): HookResponse {
   };
 }
 
-export async function readStdinJson(): Promise<CursorHookEvent> {
+export async function readStdinJson(timeoutMs = STDIN_TIMEOUT_MS): Promise<CursorHookEvent> {
   const raw = await new Promise<string>((resolve, reject) => {
     let data = "";
+    let settled = false;
+    const finish = (value: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      process.stdin.off("data", onData);
+      process.stdin.off("end", onEnd);
+      process.stdin.off("error", onError);
+      resolve(value);
+    };
+    const onData = (chunk: string | Buffer) => {
+      data += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    };
+    const onEnd = () => finish(data);
+    const onError = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    };
+    const timer = setTimeout(() => {
+      // Fail open: empty event so the hook allows rather than hanging Cursor.
+      finish("");
+    }, timeoutMs);
+
     process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk) => {
-      data += chunk;
-    });
-    process.stdin.on("end", () => resolve(data));
-    process.stdin.on("error", reject);
+    process.stdin.on("data", onData);
+    process.stdin.on("end", onEnd);
+    process.stdin.on("error", onError);
+
+    // stdin may already be ended (piped fully before listeners attach).
+    if (process.stdin.readableEnded) {
+      finish(data);
+    }
   });
   if (!raw.trim()) return {};
   return JSON.parse(raw) as CursorHookEvent;

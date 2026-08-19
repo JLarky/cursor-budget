@@ -158,16 +158,27 @@ export function formatBlockMessage(
 }
 
 export function formatUsd(value: number): string {
-  return `$${value.toFixed(2)}`;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "$?—";
+  const abs = Math.abs(n);
+  if (abs > 0 && abs < 0.01) {
+    const trimmed = n.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+    return `$${trimmed}`;
+  }
+  return `$${n.toFixed(2)}`;
 }
 
 export function formatTokens(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1000) return `${Math.round(value / 1000)}k`;
-  return String(Math.round(value));
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "?";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  return String(Math.round(n));
 }
 
 export function formatPercent(used: number, limit: number | null): string {
-  if (limit == null || limit <= 0) return "—";
-  return `${Math.round((used / limit) * 100)}%`;
+  const u = Number(used);
+  const lim = limit == null ? null : Number(limit);
+  if (lim == null || !Number.isFinite(lim) || lim <= 0 || !Number.isFinite(u)) return "—";
+  return `${Math.round((u / lim) * 100)}%`;
 }

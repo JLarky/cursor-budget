@@ -53,7 +53,10 @@ export class LocalEstimateAccountingProvider implements AccountingProvider {
           context_usage_percent: numberOrUndefined(event.context_usage_percent),
           trigger: event.trigger,
           metadata: content,
-          dedupe_key: makeDedupeKey(event.generation_id ?? "-", eventType, content),
+          dedupe_key: makeDedupeKey(event.generation_id, eventType, content, {
+            conversationId: event.conversation_id,
+            timestamp,
+          }),
         });
       });
       return;
@@ -106,7 +109,10 @@ export class LocalEstimateAccountingProvider implements AccountingProvider {
       observable_cost_usd: observableCost,
       estimated_cost_usd: observableCost * multiplier,
       metadata: JSON.stringify({ matched, model: model ?? null }),
-      dedupe_key: makeDedupeKey(event.generation_id ?? "-", eventType, content),
+      dedupe_key: makeDedupeKey(event.generation_id, eventType, content, {
+        conversationId: event.conversation_id,
+        timestamp,
+      }),
     };
   }
 }

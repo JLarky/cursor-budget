@@ -80,6 +80,8 @@ It is not Cursor billed spend.
 main().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
   if (process.argv[2] === "hook") {
+    // Last-resort fail-open for unexpected hook crashes (e.g. malformed stdin).
+    // Config/load failures are handled inside handleHook and deny enforce events.
     process.stdout.write(JSON.stringify({ continue: true, permission: "allow" }));
     process.exitCode = 0;
     return;

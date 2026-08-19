@@ -30,3 +30,14 @@ test("cost uses per-million rates", () => {
   );
   assert.equal(usd, 18);
 });
+
+test("most specific model pattern wins over broader globs", () => {
+  const config = structuredClone(DEFAULT_CONFIG);
+  config.models = {
+    "gpt-*": { inputPerMillion: 5, outputPerMillion: 15 },
+    "gpt-4o": { inputPerMillion: 2.5, outputPerMillion: 10 },
+  };
+  const { rate, matched } = resolveRate("gpt-4o", config);
+  assert.equal(matched, true);
+  assert.equal(rate.inputPerMillion, 2.5);
+});

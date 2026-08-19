@@ -1,8 +1,9 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { budgetDir, hookWrapperPath, hooksJsonPath } from "../paths.js";
 
 export function uninstallCommand(purgeData: boolean): string {
-  const home = process.env.HOME;
+  const home = homedir();
   const hooksPath = hooksJsonPath(home);
   if (existsSync(hooksPath)) {
     const hooks = JSON.parse(readFileSync(hooksPath, "utf8")) as {
