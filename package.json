@@ -1,0 +1,23 @@
+{
+  "name": "cursor-budget",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "cursor-budget": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc && node --test dist/budget/evaluator.test.js dist/budget/windows.test.js dist/pricing.test.js dist/commands/except.test.js dist/commands/limit.test.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "gpt-tokenizer": "^3.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "typescript": "^5.9.2"
+  }
+}
