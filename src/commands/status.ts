@@ -1,12 +1,12 @@
 import { getProvider } from "../accounting/index.js";
 import { formatPercent, formatTokens, formatUsd } from "../budget/evaluator.js";
 import { calendarDay, rollingHour } from "../budget/windows.js";
-import { ensureConfig } from "../config.js";
+import { loadConfigForRead } from "../config.js";
 import { getState, openDb } from "../db/client.js";
 import { configPath } from "../paths.js";
 
 export async function statusCommand(): Promise<string> {
-  const config = ensureConfig();
+  const { config, warning } = loadConfigForRead();
   const provider = getProvider(config);
   const now = new Date();
   const hourWindow = rollingHour(now);
@@ -25,6 +25,7 @@ export async function statusCommand(): Promise<string> {
   const dayTokenLimit = config.limits.calendarDay.tokens;
 
   return [
+    ...(warning ? [warning, ""] : []),
     "Cursor LLM Budget",
     "",
     hourWindow.label,

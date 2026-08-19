@@ -175,6 +175,9 @@ export async function readStdinJson(timeoutMs = STDIN_TIMEOUT_MS): Promise<Curso
       process.stdin.off("data", onData);
       process.stdin.off("end", onEnd);
       process.stdin.off("error", onError);
+      // Stop flowing so an open pipe does not keep the hook process alive
+      // after we have already answered (hook runners wait for exit).
+      process.stdin.pause();
       resolve(value);
     };
     const onData = (chunk: string | Buffer) => {
