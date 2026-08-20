@@ -36,10 +36,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/JLarky/cursor-limit.git"
+    "url": "git+https://github.com/JLarky/cursor-budget.git"
   },
   "bugs": {
-    "url": "https://github.com/JLarky/cursor-limit/issues"
+    "url": "https://github.com/JLarky/cursor-budget/issues"
   },
-  "homepage": "https://github.com/JLarky/cursor-limit#readme"
+  "homepage": "https://github.com/JLarky/cursor-budget#readme"
 }
