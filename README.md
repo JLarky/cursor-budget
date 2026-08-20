@@ -3,6 +3,8 @@
 A guard that stops Cursor Agent before you burn through your plan quota — using
 Cursor's own reported usage as the source of truth, not a local estimate.
 
+**Repository:** https://github.com/JLarky/cursor-limit
+
 It installs as a set of [Cursor hooks](https://cursor.com/docs/agent/hooks). On
 every prompt and tool call it checks your real usage from the Cursor dashboard
 API, and denies the request once you cross a threshold you set.
@@ -40,6 +42,8 @@ the majority of the bill. This reads the number Cursor bills you against.
 Requires Node >= 22.5 (for `node:sqlite`).
 
 ```sh
+git clone https://github.com/JLarky/cursor-limit.git
+cd cursor-limit
 npm install
 npm run build
 node dist/cli.js install
