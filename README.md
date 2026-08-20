@@ -43,7 +43,7 @@ Requires Node >= 22.5 (for `node:sqlite`).
 
 ```sh
 git clone https://github.com/JLarky/cursor-budget.git
-cd cursor-limit
+cd cursor-budget
 npm install
 npm run build
 node dist/cli.js install
