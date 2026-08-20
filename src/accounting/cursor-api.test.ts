@@ -15,6 +15,7 @@ import {
   normalizePeriodUsage,
   parseCursorTimestamp,
   resolveAccessToken,
+  tokenExpiry,
   writeCachedPeriodUsage,
 } from "./cursor-api.js";
 
@@ -338,4 +339,20 @@ test("no cache and failed refresh throws CursorUsageUnavailableError", async () 
       CursorUsageUnavailableError,
     );
   });
+});
+
+test("tokenExpiry reads the exp claim without verifying the signature", () => {
+  // Hand-built JWT: header.payload.signature, signature deliberately garbage.
+  const payload = Buffer.from(JSON.stringify({ exp: 1_800_000_000 })).toString("base64url");
+  const expiry = tokenExpiry(`h.${payload}.not-a-real-signature`);
+  assert.equal(expiry?.toISOString(), new Date(1_800_000_000_000).toISOString());
+});
+
+test("tokenExpiry returns null for shapes it cannot read", () => {
+  assert.equal(tokenExpiry(""), null);
+  assert.equal(tokenExpiry("opaque-not-a-jwt"), null);
+  // Well-formed JWT with no exp claim.
+  assert.equal(tokenExpiry(`h.${Buffer.from('{"sub":"x"}').toString("base64url")}.s`), null);
+  // Undecodable payload must not throw.
+  assert.equal(tokenExpiry("h.!!!not-base64!!!.s"), null);
 });

@@ -274,6 +274,36 @@ export function readCliAuth(home = homedir()): CliAuthFile {
   return parsed as CliAuthFile;
 }
 
+/**
+ * Expiry of a Cursor session JWT, read from the `exp` claim.
+ *
+ * The payload is decoded, never verified — we only need to know when the
+ * credential dies, so we can warn before the guard starts denying on auth
+ * failure. Returns `null` for anything that is not a JWT carrying a usable
+ * `exp`, so an unrecognised token shape simply means "no warning", never a
+ * crash. The token itself is never logged or persisted.
+ */
+export function tokenExpiry(token: string): Date | null {
+  const payload = token.split(".")[1];
+  if (!payload) return null;
+  try {
+    const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as unknown;
+    if (!claims || typeof claims !== "object") return null;
+    return parseCursorTimestamp((claims as { exp?: unknown }).exp);
+  } catch {
+    return null;
+  }
+}
+
+/** Expiry of whichever credential `resolveAccessToken` would use, or null. */
+export function readAuthExpiry(home?: string): Date | null {
+  try {
+    return tokenExpiry(resolveAccessToken({ home }));
+  } catch {
+    return null;
+  }
+}
+
 export function resolveAccessToken(options: GetCursorPeriodUsageOptions = {}): string {
   if (options.accessToken?.trim()) return options.accessToken.trim();
   const fromEnv = process.env.CURSOR_ACCESS_TOKEN?.trim();

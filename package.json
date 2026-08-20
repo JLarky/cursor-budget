@@ -1,6 +1,17 @@
 {
   "name": "cursor-budget",
   "version": "0.1.0",
+  "description": "Stop Cursor Agent before you burn through your plan quota, using Cursor's own reported usage.",
+  "license": "MIT",
+  "keywords": [
+    "cursor",
+    "cursor-agent",
+    "hooks",
+    "budget",
+    "quota",
+    "llm",
+    "usage"
+  ],
   "private": true,
   "type": "module",
   "bin": {
@@ -19,5 +30,9 @@
   "devDependencies": {
     "@types/node": "^24.3.0",
     "typescript": "^5.9.2"
-  }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ]
 }

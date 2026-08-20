@@ -3,6 +3,7 @@ import {
   CursorUsageUnavailableError,
   getCursorPeriodUsage,
   getProvider,
+  readAuthExpiry,
   type CursorPeriodUsageResult,
   type GetCursorPeriodUsageOptions,
 } from "./accounting/index.js";
@@ -141,6 +142,9 @@ async function dispatch(
     if (!excluded && !decision.overrideActive && periodUsage) {
       maybeWarn(config, periodUsage, now, home);
     }
+    if (!excluded) {
+      maybeWarnAuthExpiry(now, home);
+    }
 
     if (authHint) {
       return allow(authHint);
@@ -216,6 +220,36 @@ function readOverrideUntil(home?: string): Date | null {
   if (!raw) return null;
   const date = new Date(raw);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** Days-remaining thresholds for the credential-expiry warning. */
+const AUTH_EXPIRY_WARN_DAYS = [14, 7, 3, 1];
+
+/**
+ * Warn before the Cursor credential dies.
+ *
+ * With `failClosed` on, an expired token turns into a hard block on every
+ * prompt, so the useful moment to hear about it is well before that. Keyed by
+ * the expiry timestamp, which means a re-auth naturally re-arms the warnings.
+ */
+function maybeWarnAuthExpiry(now: Date, home?: string): void {
+  const expiry = readAuthExpiry(home);
+  if (!expiry) return;
+  const daysLeft = (expiry.getTime() - now.getTime()) / 86_400_000;
+  const periodKey = expiry.toISOString();
+  const db = openDb(home);
+  for (const threshold of AUTH_EXPIRY_WARN_DAYS) {
+    if (daysLeft > threshold) continue;
+    if (hasWarning(db, "authExpiry", threshold, periodKey)) continue;
+    markWarning(db, "authExpiry", threshold, periodKey, now.toISOString());
+    notify(
+      "cursor-budget",
+      daysLeft <= 0
+        ? "Cursor credential has expired. Re-authenticate with cursor-agent — the budget guard is blocking until you do."
+        : `Cursor credential expires in ${Math.max(0, Math.floor(daysLeft))}d. Re-authenticate with cursor-agent before the guard starts blocking.`,
+    );
+    break;
+  }
 }
 
 function maybeWarn(

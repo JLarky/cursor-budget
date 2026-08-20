@@ -25,7 +25,14 @@ export interface QuotaConfig {
 }
 
 export interface RateLimitConfig {
-  /** Rolling-hour event-count backstop. `null` disables. */
+  /**
+   * Rolling-hour event-count backstop. `null` disables.
+   *
+   * This is a runaway-loop catch, not a budget: the quota gate above is the
+   * real limit. The default sits well above observed heavy use (peak measured
+   * at 129 events/h) so normal agent work never trips it, while still capping
+   * a stuck loop that could otherwise burn a lot inside one cache window.
+   */
   maxEventsPerHour: number | null;
 }
 
@@ -59,7 +66,7 @@ export const DEFAULT_CONFIG: Config = {
     cacheTtlMs: 90_000,
   },
   rateLimit: {
-    maxEventsPerHour: null,
+    maxEventsPerHour: 500,
   },
   warnings: [0.5, 0.75, 0.9],
   enforcement: {

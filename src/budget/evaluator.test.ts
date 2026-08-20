@@ -79,15 +79,27 @@ function fakeResult(
   };
 }
 
-test("unset rate limit and low quota never block", () => {
+test("low quota and ordinary event volume never block", () => {
   const decision = evaluate({
     periodUsage: fakeResult({ autoPercentUsed: 1.3, apiPercentUsed: 0.5 }),
-    eventsLastHour: 500,
+    // Above the busiest hour ever observed locally (129), below the default cap.
+    eventsLastHour: 200,
     config: DEFAULT_CONFIG,
     overrideUntil: null,
   });
   assert.equal(decision.allow, true);
   assert.equal(decision.reasons.length, 0);
+});
+
+test("default rate-limit backstop blocks a runaway loop", () => {
+  const decision = evaluate({
+    periodUsage: fakeResult({ autoPercentUsed: 1.3 }),
+    eventsLastHour: DEFAULT_CONFIG.rateLimit.maxEventsPerHour ?? 0,
+    config: DEFAULT_CONFIG,
+    overrideUntil: null,
+  });
+  assert.equal(decision.allow, false);
+  assert.equal(decision.reasons[0]?.metric, "eventRate");
 });
 
 test("cursor models percent blocks at threshold", () => {

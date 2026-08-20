@@ -1,4 +1,4 @@
-import { getCursorPeriodUsage, getProvider } from "../accounting/index.js";
+import { getCursorPeriodUsage, getProvider, readAuthExpiry } from "../accounting/index.js";
 import {
   formatAge,
   formatNullablePercent,
@@ -8,6 +8,13 @@ import { rollingHour } from "../budget/windows.js";
 import { loadConfigForRead } from "../config.js";
 import { getState, openDb } from "../db/client.js";
 import { configPath } from "../paths.js";
+
+function formatAuthExpiry(expiry: Date | null, now: Date): string {
+  if (!expiry) return "expiry unknown";
+  const days = (expiry.getTime() - now.getTime()) / 86_400_000;
+  if (days <= 0) return `EXPIRED ${expiry.toLocaleDateString()} — run cursor-agent to re-authenticate`;
+  return `expires in ${Math.floor(days)}d (${expiry.toLocaleDateString()})`;
+}
 
 export async function statusCommand(home?: string): Promise<string> {
   const { config, warning } = loadConfigForRead(home);
@@ -61,6 +68,7 @@ export async function statusCommand(home?: string): Promise<string> {
       ? `  Events: ${eventsLastHour} / ${maxEvents}`
       : `  Events: ${eventsLastHour} (rate limit off)`,
     "",
+    `Credential: ${formatAuthExpiry(readAuthExpiry(home), now)}`,
     `On unknown usage: ${config.enforcement.failClosed ? "block (failClosed)" : "allow (failClosed off)"}`,
     `Override: ${overrideActive ? `until ${overrideUntil?.toLocaleString()}` : "none"}`,
     `Exceptions: ${

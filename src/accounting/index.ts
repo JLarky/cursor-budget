@@ -18,9 +18,11 @@ export {
   normalizePeriodUsage,
   parseCursorTimestamp,
   readCachedPeriodUsage,
+  readAuthExpiry,
   readCliAuth,
   resolveAccessToken,
   serializePeriodUsage,
+  tokenExpiry,
   writeCachedPeriodUsage,
 } from "./cursor-api.js";
 export type {
