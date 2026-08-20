@@ -5,6 +5,11 @@ export function budgetDir(home = homedir()): string {
   return join(home, ".cursor", "llm-budget");
 }
 
+/** Cursor Agent CLI session file (`accessToken` / `refreshToken`). */
+export function cliAuthPath(home = homedir()): string {
+  return join(home, ".config", "cursor", "auth.json");
+}
+
 export function configPath(home = homedir()): string {
   return join(budgetDir(home), "config.json");
 }

@@ -3,8 +3,8 @@ import { configCommand } from "./commands/config.js";
 import { exceptCommand } from "./commands/except.js";
 import { historyCommand } from "./commands/history.js";
 import { installCommand } from "./commands/install.js";
-import { limitCommand } from "./commands/limit.js";
 import { overrideCommand } from "./commands/override.js";
+import { spendingCommand } from "./commands/spending.js";
 import { statusCommand } from "./commands/status.js";
 import { uninstallCommand } from "./commands/uninstall.js";
 import { handleHook, readStdinJson } from "./hook.js";
@@ -22,6 +22,10 @@ async function main(): Promise<void> {
     case "status":
       process.stdout.write(`${await statusCommand()}\n`);
       return;
+    case "spending":
+    case "usage-api":
+      process.stdout.write(await spendingCommand());
+      return;
     case "config":
       process.stdout.write(configCommand());
       return;
@@ -35,10 +39,6 @@ async function main(): Promise<void> {
     case "exclude":
       process.stdout.write(exceptCommand(rest));
       return;
-    case "limit":
-    case "budget":
-      process.stdout.write(limitCommand(rest));
-      return;
     case "install":
       process.stdout.write(installCommand());
       return;
@@ -49,27 +49,23 @@ async function main(): Promise<void> {
     case "--help":
     case "help":
     case undefined:
-      process.stdout.write(`cursor-budget — estimated Cursor usage guard
+      process.stdout.write(`cursor-budget — Cursor usage guard
 
 Usage:
   cursor-budget hook
   cursor-budget status
+  cursor-budget spending
   cursor-budget config
   cursor-budget override 15m|30m|1h|off
   cursor-budget except add <session-id>
   cursor-budget except remove <session-id>
   cursor-budget except list
-  cursor-budget limit list
-  cursor-budget limit hour usd 1
-  cursor-budget limit day usd 4
-  cursor-budget limit hour tokens 200000
-  cursor-budget limit hour usd off
   cursor-budget history
   cursor-budget install
   cursor-budget uninstall [--purge-data]
 
-Accounting is estimated from locally observable Cursor activity.
-It is not Cursor billed spend.
+Primary gate uses Cursor dashboard period usage (Cursor Models / Other Models).
+Backstop is a local rolling-hour event count.
 `);
       return;
     default:

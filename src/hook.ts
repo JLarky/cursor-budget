@@ -1,12 +1,18 @@
-import { getProvider } from "./accounting/index.js";
-import type { CursorHookEvent, Usage } from "./accounting/types.js";
-import { evaluate, formatBlockMessage, formatPercent, formatUsd } from "./budget/evaluator.js";
-import { activeWindows, calendarDay, rollingHour } from "./budget/windows.js";
+import {
+  CursorApiError,
+  CursorUsageUnavailableError,
+  getCursorPeriodUsage,
+  getProvider,
+  type CursorPeriodUsageResult,
+  type GetCursorPeriodUsageOptions,
+} from "./accounting/index.js";
+import type { CursorHookEvent } from "./accounting/types.js";
+import { evaluate, formatBlockMessage, formatPercentValue } from "./budget/evaluator.js";
+import { rollingHour } from "./budget/windows.js";
 import type { Config } from "./config.js";
 import { ensureConfig } from "./config.js";
 import { getState, hasWarning, markWarning, openDb } from "./db/client.js";
 import { notify } from "./notify.js";
-import { resolveRate } from "./pricing.js";
 
 const ENFORCE_EVENTS = new Set([
   "beforeSubmitPrompt",
@@ -17,7 +23,7 @@ const ENFORCE_EVENTS = new Set([
   "subagentStart",
 ]);
 
-const RECORD_EVENTS = new Set(["afterAgentThought", "afterAgentResponse", "preCompact"]);
+const RECORD_EVENTS = new Set(["afterAgentThought", "afterAgentResponse"]);
 
 const STDIN_TIMEOUT_MS = 2_000;
 
@@ -28,7 +34,17 @@ export interface HookResponse {
   agent_message?: string;
 }
 
-export async function handleHook(event: CursorHookEvent, config?: Config): Promise<HookResponse> {
+export interface HookDeps {
+  home?: string;
+  getPeriodUsage?: (options: GetCursorPeriodUsageOptions) => Promise<CursorPeriodUsageResult>;
+  now?: Date;
+}
+
+export async function handleHook(
+  event: CursorHookEvent,
+  config?: Config,
+  deps: HookDeps = {},
+): Promise<HookResponse> {
   const eventName = String(event.hook_event_name ?? "");
   const conversationId = event.conversation_id ?? "";
 
@@ -36,7 +52,7 @@ export async function handleHook(event: CursorHookEvent, config?: Config): Promi
   // via a default-parameter throw and silently fail open in the CLI wrapper.
   let resolved: Config;
   try {
-    resolved = config ?? ensureConfig();
+    resolved = config ?? ensureConfig(deps.home);
   } catch (error) {
     if (ENFORCE_EVENTS.has(eventName)) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -50,7 +66,7 @@ export async function handleHook(event: CursorHookEvent, config?: Config): Promi
   const excluded = resolved.excludeConversationIds.includes(conversationId);
 
   try {
-    return await dispatch(event, eventName, excluded, resolved);
+    return await dispatch(event, eventName, excluded, resolved, deps);
   } catch (error) {
     if (resolved.enforcement.failClosed && ENFORCE_EVENTS.has(eventName) && !excluded) {
       const message = `cursor-budget failed closed: ${error instanceof Error ? error.message : String(error)}\nSession id: ${conversationId || "unknown"}`;
@@ -65,40 +81,47 @@ async function dispatch(
   eventName: string,
   excluded: boolean,
   config: Config,
+  deps: HookDeps,
 ): Promise<HookResponse> {
-  const provider = getProvider(config);
+  const home = deps.home;
+  const provider = getProvider(config, home);
+  const now = deps.now ?? new Date();
 
   if (ENFORCE_EVENTS.has(eventName)) {
-    const now = new Date();
     const hourWindow = rollingHour(now);
-    const dayWindow = calendarDay(now);
-    const [hour, day] = await Promise.all([
-      provider.getUsage(hourWindow),
-      provider.getUsage(dayWindow),
-    ]);
-    const overrideUntil = readOverrideUntil();
-    const model = event.model_id || event.model;
-    const { matched } = resolveRate(model, config);
+    const eventsLastHour = await provider.countEvents(hourWindow);
+
+    const { periodUsage, authHint } = await resolvePeriodUsage(config, deps, now);
+    const overrideUntil = readOverrideUntil(home);
     const decision = evaluate({
-      hour,
-      day,
+      periodUsage,
+      eventsLastHour,
       config,
       overrideUntil,
       now,
       excluded,
-      unknownModel: Boolean(model) && !matched,
     });
 
     if (!decision.allow) {
-      const message = formatBlockMessage(decision, hour, day, config, event.conversation_id);
+      const message = formatBlockMessage(
+        decision,
+        periodUsage,
+        eventsLastHour,
+        config,
+        event.conversation_id,
+      );
       return deny(message);
     }
 
     if (eventName === "beforeSubmitPrompt" && provider.recordEvent) {
       await provider.recordEvent(event);
     }
-    if (!excluded && !decision.overrideActive) {
-      maybeWarn(config, hour, day, now);
+    if (!excluded && !decision.overrideActive && periodUsage) {
+      maybeWarn(config, periodUsage, now, home);
+    }
+
+    if (authHint) {
+      return allow(authHint);
     }
     return allow();
   }
@@ -109,49 +132,127 @@ async function dispatch(
   return allow();
 }
 
-function readOverrideUntil(): Date | null {
-  const raw = getState(openDb(), "override_until");
+/**
+ * Apply the §5 failure policy for the primary (Cursor API) gate.
+ * Returns `periodUsage: null` when the primary gate must fail open.
+ */
+export async function resolvePeriodUsage(
+  config: Config,
+  deps: HookDeps = {},
+  now: Date = new Date(),
+): Promise<{ periodUsage: CursorPeriodUsageResult | null; authHint?: string }> {
+  const getUsage = deps.getPeriodUsage ?? getCursorPeriodUsage;
+  try {
+    const result = await getUsage({
+      home: deps.home,
+      cacheTtlMs: config.quota.cacheTtlMs,
+      now,
+    });
+
+    if (result.source === "stale-cache" && result.ageMs > config.quota.maxStaleMs) {
+      return { periodUsage: null };
+    }
+    return { periodUsage: result };
+  } catch (error) {
+    if (isAuthFailure(error)) {
+      return {
+        periodUsage: null,
+        authHint:
+          "cursor-budget: Cursor auth expired or missing. Re-authenticate with cursor-agent, then retry.",
+      };
+    }
+    if (error instanceof CursorUsageUnavailableError) {
+      if (config.enforcement.failClosed) {
+        throw error;
+      }
+      return { periodUsage: null };
+    }
+    if (config.enforcement.failClosed) {
+      throw error;
+    }
+    return { periodUsage: null };
+  }
+}
+
+function isAuthFailure(error: unknown): boolean {
+  if (error instanceof CursorApiError && error.status === 401) return true;
+  if (error instanceof CursorUsageUnavailableError) {
+    const cause = error.causeError;
+    if (cause instanceof CursorApiError && cause.status === 401) return true;
+  }
+  return false;
+}
+
+function readOverrideUntil(home?: string): Date | null {
+  const raw = getState(openDb(home), "override_until");
   if (!raw) return null;
   const date = new Date(raw);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function maybeWarn(config: Config, hour: Usage, day: Usage, now: Date): void {
-  const db = openDb();
-  for (const window of activeWindows(now)) {
-    const usage = window.id === "rollingHour" ? hour : day;
-    const limit = config.limits[window.id];
-    const usdLimit = limit.usd;
-    const tokenLimit = limit.tokens;
-    const usdRatio = usdLimit && usage.usd != null ? usage.usd / usdLimit : 0;
-    const tokenRatio = tokenLimit ? usage.totalTokens / tokenLimit : 0;
-    const ratio = Math.max(usdRatio, tokenRatio);
-    const periodKey =
-      window.id === "calendarDay"
-        ? localDateKey(now)
-        : String(Math.floor(now.getTime() / 3_600_000));
-    for (const threshold of config.warnings) {
-      if (ratio < threshold) continue;
-      if (hasWarning(db, window.id, threshold, periodKey)) continue;
-      markWarning(db, window.id, threshold, periodKey, now.toISOString());
-      const usedUsd = usage.usd ?? 0;
-      const text =
-        usdLimit != null
-          ? `LLM budget: ${Math.round(ratio * 100)}% of ${window.label.toLowerCase()} limit used\n${formatUsd(usedUsd)} / ${formatUsd(usdLimit)}`
-          : `LLM budget: ${formatPercent(usage.totalTokens, tokenLimit)} of ${window.label.toLowerCase()} token limit used`;
-      notify("cursor-budget", text);
-    }
+function maybeWarn(
+  config: Config,
+  periodUsage: CursorPeriodUsageResult,
+  now: Date,
+  home?: string,
+): void {
+  const cycleEnd = periodUsage.usage.billingCycleEnd;
+  if (!cycleEnd) return;
+  const periodKey = cycleEnd.toISOString();
+  const db = openDb(home);
+  const plan = periodUsage.usage.planUsage;
+
+  warnMeter({
+    db,
+    windowId: "cursorModels",
+    label: "Cursor Models",
+    percentUsed: plan.autoPercentUsed,
+    blockAt: config.quota.cursorModelsBlockAtPercent,
+    warnings: config.warnings,
+    periodKey,
+    now,
+  });
+  warnMeter({
+    db,
+    windowId: "otherModels",
+    label: "Other Models",
+    percentUsed: plan.apiPercentUsed,
+    blockAt: config.quota.otherModelsBlockAtPercent,
+    warnings: config.warnings,
+    periodKey,
+    now,
+  });
+}
+
+function warnMeter(input: {
+  db: ReturnType<typeof openDb>;
+  windowId: string;
+  label: string;
+  percentUsed: number | null;
+  blockAt: number;
+  warnings: number[];
+  periodKey: string;
+  now: Date;
+}): void {
+  const { db, windowId, label, percentUsed, blockAt, warnings, periodKey, now } = input;
+  if (percentUsed == null || !Number.isFinite(percentUsed) || !(blockAt > 0)) return;
+  // warnings are 0–1 fractions of the block threshold; API percent is 0–100.
+  const ratio = percentUsed / blockAt;
+  for (const threshold of warnings) {
+    if (ratio < threshold) continue;
+    if (hasWarning(db, windowId, threshold, periodKey)) continue;
+    markWarning(db, windowId, threshold, periodKey, now.toISOString());
+    notify(
+      "cursor-budget",
+      `LLM budget: ${Math.round(ratio * 100)}% of ${label} block threshold\n${formatPercentValue(percentUsed)} used (block at ${formatPercentValue(blockAt)})`,
+    );
   }
 }
 
-function localDateKey(now: Date): string {
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-
-function allow(): HookResponse {
+function allow(userMessage?: string): HookResponse {
+  if (userMessage) {
+    return { continue: true, permission: "allow", user_message: userMessage };
+  }
   return { continue: true, permission: "allow" };
 }
 

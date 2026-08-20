@@ -1,16 +1,14 @@
-import { formatTokens, formatUsd } from "../budget/evaluator.js";
 import { ensureConfig } from "../config.js";
 import { listRecentEvents, openDb } from "../db/client.js";
 
-export function historyCommand(): string {
-  ensureConfig();
-  const rows = listRecentEvents(openDb(), 25);
+export function historyCommand(home?: string): string {
+  ensureConfig(home);
+  const rows = listRecentEvents(openDb(home), 25);
   if (rows.length === 0) return "No usage events yet.\n";
-  const lines = ["Recent usage events (estimated, not billed)", ""];
+  const lines = ["Recent usage events", ""];
   for (const row of rows) {
-    const cost = Number(row.estimated_cost_usd);
     lines.push(
-      `${row.timestamp}  ${row.event_type.padEnd(22)}  ${formatTokens(Number(row.estimated_tokens))} est tokens  ${formatUsd(cost)}  ${row.model_id || row.model || "-"}`,
+      `${row.timestamp}  ${row.event_type.padEnd(22)}  ${row.model || "-"}  ${row.conversation_id || "-"}`,
     );
   }
   return `${lines.join("\n")}\n`;

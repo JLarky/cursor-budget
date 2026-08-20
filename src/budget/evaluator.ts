@@ -1,11 +1,20 @@
-import type { Config, Limit } from "../config.js";
-import type { Usage } from "../accounting/types.js";
+import type {
+  CursorPeriodUsage,
+  CursorPeriodUsageResult,
+} from "../accounting/cursor-api.js";
+import type { Config } from "../config.js";
 import type { WindowId } from "./windows.js";
+
+export type BlockMetric =
+  | "cursorModelsPercent"
+  | "otherModelsPercent"
+  | "totalPercent"
+  | "eventRate";
 
 export interface BlockReason {
   window: WindowId;
   windowLabel: string;
-  metric: "usd" | "tokens";
+  metric: BlockMetric;
   used: number;
   limit: number;
 }
@@ -15,17 +24,26 @@ export interface Evaluation {
   reasons: BlockReason[];
   overrideActive: boolean;
   excluded: boolean;
-  unknownModelBlocked: boolean;
 }
 
+/**
+ * Decide whether to allow agent work.
+ *
+ * Primary gate: Cursor dashboard percent meters (when `periodUsage` is usable).
+ * Backstop: rolling-hour event count (always local).
+ *
+ * Callers must apply the §5 failure policy before passing `periodUsage`:
+ * pass `null` when usage is unknown (too stale, unavailable, auth failure).
+ * A `null` percent field inside a usable snapshot skips that meter (fail open),
+ * never treating absent as 0.
+ */
 export function evaluate(input: {
-  hour: Usage;
-  day: Usage;
+  periodUsage: CursorPeriodUsageResult | null;
+  eventsLastHour: number;
   config: Config;
   overrideUntil: Date | null;
   now?: Date;
   excluded?: boolean;
-  unknownModel?: boolean;
 }): Evaluation {
   const now = input.now ?? new Date();
   if (input.excluded) {
@@ -34,121 +52,149 @@ export function evaluate(input: {
       reasons: [],
       overrideActive: false,
       excluded: true,
-      unknownModelBlocked: false,
     };
   }
 
-  const overrideActive = Boolean(input.overrideUntil && input.overrideUntil.getTime() > now.getTime());
+  const overrideActive = Boolean(
+    input.overrideUntil && input.overrideUntil.getTime() > now.getTime(),
+  );
   if (overrideActive) {
     return {
       allow: true,
       reasons: [],
       overrideActive: true,
       excluded: false,
-      unknownModelBlocked: false,
     };
   }
 
-  if (input.unknownModel && input.config.unknownModel === "block") {
-    return {
-      allow: false,
-      reasons: [],
-      overrideActive: false,
-      excluded: false,
-      unknownModelBlocked: true,
-    };
+  const reasons: BlockReason[] = [];
+
+  if (input.periodUsage) {
+    reasons.push(...quotaReasons(input.periodUsage.usage, input.config));
   }
 
-  const reasons: BlockReason[] = [
-    ...limitReasons("rollingHour", "Last 60 minutes", input.hour, input.config.limits.rollingHour),
-    ...limitReasons("calendarDay", "Today", input.day, input.config.limits.calendarDay),
-  ];
+  const maxEvents = input.config.rateLimit.maxEventsPerHour;
+  if (maxEvents != null && input.eventsLastHour >= maxEvents) {
+    reasons.push({
+      window: "rollingHour",
+      windowLabel: "Last 60 minutes",
+      metric: "eventRate",
+      used: input.eventsLastHour,
+      limit: maxEvents,
+    });
+  }
 
   return {
     allow: reasons.length === 0,
     reasons,
     overrideActive: false,
     excluded: false,
-    unknownModelBlocked: false,
   };
 }
 
-function limitReasons(
-  window: WindowId,
-  windowLabel: string,
-  usage: Usage,
-  limit: Limit,
-): BlockReason[] {
+function quotaReasons(usage: CursorPeriodUsage, config: Config): BlockReason[] {
   const reasons: BlockReason[] = [];
-  if (limit.usd != null && usage.usd != null && usage.usd >= limit.usd) {
-    reasons.push({
-      window,
-      windowLabel,
-      metric: "usd",
-      used: usage.usd,
-      limit: limit.usd,
-    });
-  }
-  if (limit.tokens != null && usage.totalTokens >= limit.tokens) {
-    reasons.push({
-      window,
-      windowLabel,
-      metric: "tokens",
-      used: usage.totalTokens,
-      limit: limit.tokens,
-    });
+  const plan = usage.planUsage;
+
+  // Absent/renamed meters stay null — never treat as 0 (would make the gate unreachable).
+  pushPercentReason(
+    reasons,
+    "cursorModels",
+    "Cursor Models",
+    "cursorModelsPercent",
+    plan.autoPercentUsed,
+    config.quota.cursorModelsBlockAtPercent,
+  );
+  pushPercentReason(
+    reasons,
+    "otherModels",
+    "Other Models",
+    "otherModelsPercent",
+    plan.apiPercentUsed,
+    config.quota.otherModelsBlockAtPercent,
+  );
+  if (config.quota.totalBlockAtPercent != null) {
+    pushPercentReason(
+      reasons,
+      "totalQuota",
+      "Total quota",
+      "totalPercent",
+      plan.totalPercentUsed,
+      config.quota.totalBlockAtPercent,
+    );
   }
   return reasons;
 }
 
+function pushPercentReason(
+  reasons: BlockReason[],
+  window: WindowId,
+  windowLabel: string,
+  metric: BlockMetric,
+  used: number | null,
+  limit: number,
+): void {
+  if (used == null) return;
+  if (!Number.isFinite(used) || !Number.isFinite(limit)) return;
+  if (used >= limit) {
+    reasons.push({ window, windowLabel, metric, used, limit });
+  }
+}
+
 export function formatBlockMessage(
   evaluation: Evaluation,
-  hour: Usage,
-  day: Usage,
+  periodUsage: CursorPeriodUsageResult | null,
+  eventsLastHour: number,
   config: Config,
   sessionId?: string,
 ): string {
   const id = sessionId?.trim() || "unknown";
-  if (evaluation.unknownModelBlocked) {
-    return [
-      "Cursor Agent blocked by cursor-budget.",
-      "",
-      `Session id: ${id}`,
-      "",
-      "Unknown model and unknownModel is set to block.",
-      "Accounting is estimated from locally observable Cursor activity.",
-      "",
-      "Run:",
-      "  cursor-budget status",
-      "  cursor-budget override 30m",
-      `  cursor-budget except add ${id}`,
-    ].join("\n");
-  }
-
   const primary = evaluation.reasons[0];
   const lines = ["Cursor Agent blocked by cursor-budget.", "", `Session id: ${id}`, ""];
+
   if (primary) {
-    const kind = primary.window === "rollingHour" ? "Rolling 60m" : "Daily";
-    if (primary.metric === "tokens") {
-      lines.push(`${kind} token limit reached:`);
-      lines.push(`  ${formatTokens(primary.used)} / ${formatTokens(primary.limit)} estimated tokens`);
+    if (primary.metric === "eventRate") {
+      lines.push("Rolling-hour event rate limit reached:");
+      lines.push(`  ${primary.used} / ${primary.limit} events`);
     } else {
-      lines.push(`${kind} dollar limit reached:`);
-      lines.push(`  ${formatUsd(primary.used)} / ${formatUsd(primary.limit)}`);
+      lines.push(`${primary.windowLabel} quota limit reached:`);
+      lines.push(`  ${formatPercentValue(primary.used)} / ${formatPercentValue(primary.limit)} used`);
     }
     lines.push("");
   }
 
-  const dayUsd = config.limits.calendarDay.usd;
-  const hourUsd = config.limits.rollingHour.usd;
-  lines.push("Daily usage:");
-  lines.push(`  ${formatUsd(day.usd ?? 0)}${dayUsd != null ? ` / ${formatUsd(dayUsd)}` : ""}`);
-  if (hour.usd != null) {
-    lines.push("Hourly usage:");
-    lines.push(`  ${formatUsd(hour.usd)}${hourUsd != null ? ` / ${formatUsd(hourUsd)}` : ""}`);
+  if (periodUsage) {
+    const plan = periodUsage.usage.planUsage;
+    lines.push("Cursor Models:");
+    lines.push(`  ${formatNullablePercent(plan.autoPercentUsed)}`);
+    lines.push("Other Models:");
+    lines.push(`  ${formatNullablePercent(plan.apiPercentUsed)}`);
+    if (plan.limitUsd != null) {
+      lines.push("Period spend:");
+      lines.push(`  ${formatUsd(plan.totalSpendUsd)} / ${formatUsd(plan.limitUsd)}`);
+    } else {
+      lines.push("Period spend:");
+      lines.push(`  ${formatUsd(plan.totalSpendUsd)}`);
+    }
+    const reset = periodUsage.usage.billingCycleEnd;
+    if (reset) {
+      lines.push(`Cycle resets: ${reset.toLocaleString()}`);
+    }
+    if (periodUsage.stale || periodUsage.source === "stale-cache") {
+      lines.push(`Snapshot: stale (${formatAge(periodUsage.ageMs)}, source ${periodUsage.source})`);
+    } else {
+      lines.push(`Snapshot: ${periodUsage.source} (age ${formatAge(periodUsage.ageMs)})`);
+    }
+    lines.push("");
   }
-  lines.push("");
-  lines.push("Accounting is estimated from locally observable Cursor activity.");
+
+  const maxEvents = config.rateLimit.maxEventsPerHour;
+  lines.push("Events (last 60m):");
+  lines.push(
+    maxEvents != null
+      ? `  ${eventsLastHour} / ${maxEvents}`
+      : `  ${eventsLastHour} (no rate limit)`,
+  );
   lines.push("");
   lines.push("Run:");
   lines.push("  cursor-budget status");
@@ -168,17 +214,23 @@ export function formatUsd(value: number): string {
   return `$${n.toFixed(2)}`;
 }
 
-export function formatTokens(value: number): string {
+export function formatPercentValue(value: number): string {
   const n = Number(value);
-  if (!Number.isFinite(n)) return "?";
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1000) return `${Math.round(n / 1000)}k`;
-  return String(Math.round(n));
+  if (!Number.isFinite(n)) return "—";
+  if (Number.isInteger(n)) return `${n}%`;
+  return `${n.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")}%`;
 }
 
-export function formatPercent(used: number, limit: number | null): string {
-  const u = Number(used);
-  const lim = limit == null ? null : Number(limit);
-  if (lim == null || !Number.isFinite(lim) || lim <= 0 || !Number.isFinite(u)) return "—";
-  return `${Math.round((u / lim) * 100)}%`;
+export function formatNullablePercent(value: number | null): string {
+  if (value == null) return "unavailable";
+  return formatPercentValue(value);
+}
+
+export function formatAge(ageMs: number): string {
+  const ms = Number(ageMs);
+  if (!Number.isFinite(ms) || ms < 0) return "unknown age";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
+  return `${(ms / 3_600_000).toFixed(1)}h`;
 }

@@ -5,14 +5,29 @@ import { fileURLToPath } from "node:url";
 import { ensureConfig } from "../config.js";
 import { hookWrapperPath, hooksJsonPath } from "../paths.js";
 
+/** Events the guard actually handles (enforce + record). */
 const HOOK_EVENTS = [
   "beforeSubmitPrompt",
   "afterAgentThought",
   "afterAgentResponse",
   "preToolUse",
   "beforeShellExecution",
-  "preCompact",
+  "beforeMCPExecution",
+  "beforeReadFile",
+  "subagentStart",
 ] as const;
+
+/** Old events we no longer handle — strip leftover entries on install. */
+const OBSOLETE_HOOK_EVENTS = ["preCompact"] as const;
+
+function isCursorBudgetEntry(entry: unknown): boolean {
+  return (
+    typeof entry === "object" &&
+    entry !== null &&
+    "command" in entry &&
+    String((entry as { command: string }).command).includes("cursor-budget")
+  );
+}
 
 export function installCommand(): string {
   ensureConfig();
@@ -52,15 +67,16 @@ exec "$NODE" ${JSON.stringify(cli)} hook "$@"
     hooks.hooks ??= {};
   }
 
+  for (const event of OBSOLETE_HOOK_EVENTS) {
+    const list = Array.isArray(hooks.hooks[event]) ? hooks.hooks[event] : [];
+    const next = list.filter((entry) => !isCursorBudgetEntry(entry));
+    if (next.length === 0) delete hooks.hooks[event];
+    else hooks.hooks[event] = next;
+  }
+
   for (const event of HOOK_EVENTS) {
     const list = Array.isArray(hooks.hooks[event]) ? hooks.hooks[event] : [];
-    const already = list.some(
-      (entry) =>
-        typeof entry === "object" &&
-        entry !== null &&
-        "command" in entry &&
-        String((entry as { command: string }).command).includes("cursor-budget"),
-    );
+    const already = list.some(isCursorBudgetEntry);
     if (!already) {
       list.push({
         command: "./hooks/cursor-budget",

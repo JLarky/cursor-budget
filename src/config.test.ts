@@ -15,13 +15,14 @@ import { configPath } from "./paths.js";
 
 test("empty object uses defaults", () => {
   const config = parseConfig({});
-  assert.deepEqual(config.limits, DEFAULT_CONFIG.limits);
-  assert.equal(config.accounting.safetyMultiplier, 2);
+  assert.deepEqual(config.quota, DEFAULT_CONFIG.quota);
+  assert.deepEqual(config.rateLimit, DEFAULT_CONFIG.rateLimit);
+  assert.deepEqual(config.warnings, DEFAULT_CONFIG.warnings);
 });
 
-test("rejects unknown top-level fields", () => {
+test("rejects unknown top-level fields (including removed legacy keys)", () => {
   assert.throws(
-    () => parseConfig({ safetyMultiplier: 3 }),
+    () => parseConfig({ limits: { rollingHour: { usd: 1 } } }),
     (error: unknown) => error instanceof ConfigError && /Invalid config\.json/.test(error.message),
   );
 });
@@ -29,30 +30,33 @@ test("rejects unknown top-level fields", () => {
 test("allows $schema and _comment annotations", () => {
   const config = parseConfig({
     $schema: "https://example.com/cursor-budget.schema.json",
-    _comment: "hourly cap",
-    limits: { rollingHour: { usd: 1 } },
+    _comment: "quota caps",
+    quota: { cursorModelsBlockAtPercent: 80 },
   });
-  assert.equal(config.limits.rollingHour.usd, 1);
-  assert.equal(config.limits.rollingHour.tokens, null);
+  assert.equal(config.quota.cursorModelsBlockAtPercent, 80);
+  assert.equal(config.quota.otherModelsBlockAtPercent, 90);
 });
 
-test("rejects typo model rate keys", () => {
+test("rejects percent thresholds outside 0–100", () => {
   assert.throws(
-    () =>
-      parseConfig({
-        models: {
-          "claude-sonnet-*": { input_per_million: 3, outputPerMillion: 15 },
-        },
-      }),
+    () => parseConfig({ quota: { cursorModelsBlockAtPercent: 101 } }),
+    ConfigError,
+  );
+  assert.throws(
+    () => parseConfig({ quota: { otherModelsBlockAtPercent: -1 } }),
     ConfigError,
   );
 });
 
-test("rejects string limits", () => {
+test("rejects warnings outside 0–1", () => {
+  assert.throws(() => parseConfig({ warnings: [1.5] }), ConfigError);
+});
+
+test("rejects string quota values", () => {
   assert.throws(
     () =>
       parseConfig({
-        limits: { rollingHour: { usd: "5", tokens: null } },
+        quota: { cursorModelsBlockAtPercent: "90" },
       }),
     ConfigError,
   );
@@ -62,41 +66,19 @@ test("rejects unknown nested keys", () => {
   assert.throws(
     () =>
       parseConfig({
-        accounting: { provider: "local", safetyMultiplier: 2, extra: true },
+        quota: { cursorModelsBlockAtPercent: 90, extra: true },
       }),
     ConfigError,
   );
 });
 
-test("merges user models onto defaults", () => {
+test("accepts null totalBlockAtPercent and rate limit", () => {
   const config = parseConfig({
-    models: {
-      "my-local-*": { inputPerMillion: 1, outputPerMillion: 2 },
-    },
+    quota: { totalBlockAtPercent: null },
+    rateLimit: { maxEventsPerHour: null },
   });
-  assert.equal(config.models["my-local-*"]?.inputPerMillion, 1);
-  assert.equal(config.models["claude-sonnet-*"]?.inputPerMillion, 3);
-});
-
-test("accepts one-key partial limits", () => {
-  const config = parseConfig({
-    limits: {
-      rollingHour: { usd: 5 },
-      calendarDay: { tokens: 200_000 },
-    },
-  });
-  assert.equal(config.limits.rollingHour.usd, 5);
-  assert.equal(config.limits.rollingHour.tokens, null);
-  assert.equal(config.limits.calendarDay.usd, null);
-  assert.equal(config.limits.calendarDay.tokens, 200_000);
-});
-
-test("accepts partial fallback rates", () => {
-  const config = parseConfig({
-    fallback: { inputPerMillion: 9 },
-  });
-  assert.equal(config.fallback.inputPerMillion, 9);
-  assert.equal(config.fallback.outputPerMillion, DEFAULT_CONFIG.fallback.outputPerMillion);
+  assert.equal(config.quota.totalBlockAtPercent, null);
+  assert.equal(config.rateLimit.maxEventsPerHour, null);
 });
 
 test("ensureConfig treats whitespace-only file as empty object", () => {
@@ -105,7 +87,7 @@ test("ensureConfig treats whitespace-only file as empty object", () => {
     ensureConfig(home);
     writeFileSync(configPath(home), "  \n\t\n");
     const config = ensureConfig(home);
-    assert.deepEqual(config.limits, DEFAULT_CONFIG.limits);
+    assert.deepEqual(config.quota, DEFAULT_CONFIG.quota);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -129,14 +111,14 @@ test("ensureConfig errors include config path and recovery hint", () => {
   }
 });
 
-test("serializeConfig omits default model rates", () => {
+test("serializeConfig omits defaults", () => {
   const config = structuredClone(DEFAULT_CONFIG);
-  config.limits.rollingHour.usd = 1;
+  config.quota.cursorModelsBlockAtPercent = 80;
   config.excludeConversationIds = ["abc"];
   const file = serializeConfig(config);
-  assert.deepEqual(file.limits, { rollingHour: { usd: 1 } });
+  assert.deepEqual(file.quota, { cursorModelsBlockAtPercent: 80 });
   assert.deepEqual(file.excludeConversationIds, ["abc"]);
-  assert.equal("models" in file, false);
+  assert.equal("rateLimit" in file, false);
 });
 
 test("writeConfig stays compact after except-style mutation", () => {

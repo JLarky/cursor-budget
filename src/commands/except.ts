@@ -35,7 +35,7 @@ export function exceptCommand(args: string[], home?: string): string {
   }
   const next = [...config.excludeConversationIds, id];
   writeConfig({ ...config, excludeConversationIds: next }, home);
-  return `Excepted ${id}. It will not be blocked and will not count toward limits.\n${formatList(next)}`;
+  return `Excepted ${id}. It will not be blocked and will not count toward the event-rate backstop.\n${formatList(next)}`;
 }
 
 function formatList(ids: string[]): string {

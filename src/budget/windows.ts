@@ -1,4 +1,4 @@
-export type WindowId = "rollingHour" | "calendarDay";
+export type WindowId = "rollingHour" | "cursorModels" | "otherModels" | "totalQuota";
 
 export interface TimeWindow {
   id: WindowId;
@@ -15,21 +15,6 @@ export function rollingHour(now = new Date()): TimeWindow {
     to: now,
     label: "Last 60 minutes",
   };
-}
-
-export function calendarDay(now = new Date()): TimeWindow {
-  const from = new Date(now);
-  from.setHours(0, 0, 0, 0);
-  return {
-    id: "calendarDay",
-    from,
-    to: now,
-    label: "Today",
-  };
-}
-
-export function activeWindows(now = new Date()): TimeWindow[] {
-  return [rollingHour(now), calendarDay(now)];
 }
 
 export function parseDuration(input: string): number | null {

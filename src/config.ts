@@ -3,112 +3,95 @@ import { dirname } from "node:path";
 import * as v from "valibot";
 import { budgetDir, configPath } from "./paths.js";
 
-export interface Limit {
-  usd: number | null;
-  tokens: number | null;
+export interface QuotaConfig {
+  /**
+   * Block when dashboard "Cursor Models" meter (`autoPercentUsed`) reaches this value.
+   * Scale is **0–100** (same as the API), not 0–1. Distinct from `warnings`.
+   */
+  cursorModelsBlockAtPercent: number;
+  /**
+   * Block when dashboard "Other Models" meter (`apiPercentUsed`) reaches this value.
+   * Scale is **0–100** (same as the API), not 0–1.
+   */
+  otherModelsBlockAtPercent: number;
+  /**
+   * Optional block on `totalPercentUsed` (**0–100**). `null` disables.
+   */
+  totalBlockAtPercent: number | null;
+  /** Beyond this age, a stale-cache snapshot is treated as unknown (fail open). */
+  maxStaleMs: number;
+  /** Soft TTL for the SQLite usage cache before a network refresh is attempted. */
+  cacheTtlMs: number;
 }
 
-export interface ModelRate {
-  inputPerMillion: number;
-  outputPerMillion: number;
-  reasoningPerMillion?: number;
+export interface RateLimitConfig {
+  /** Rolling-hour event-count backstop. `null` disables. */
+  maxEventsPerHour: number | null;
 }
 
 export interface Config {
-  limits: {
-    rollingHour: Limit;
-    calendarDay: Limit;
-  };
-  accounting: {
-    provider: "local";
-    safetyMultiplier: number;
-  };
+  quota: QuotaConfig;
+  rateLimit: RateLimitConfig;
+  /**
+   * Warning fractions of each quota block threshold (**0–1** scale).
+   * e.g. `0.5` with `cursorModelsBlockAtPercent: 90` warns at 45% API usage.
+   */
   warnings: number[];
-  unknownModel: "fallback" | "block";
   enforcement: {
     failClosed: boolean;
   };
-  models: Record<string, ModelRate>;
-  fallback: ModelRate;
   excludeConversationIds: string[];
 }
 
 export const DEFAULT_CONFIG: Config = {
-  limits: {
-    rollingHour: { usd: null, tokens: null },
-    calendarDay: { usd: null, tokens: null },
+  quota: {
+    cursorModelsBlockAtPercent: 90,
+    otherModelsBlockAtPercent: 90,
+    totalBlockAtPercent: null,
+    maxStaleMs: 3_600_000,
+    cacheTtlMs: 90_000,
   },
-  accounting: {
-    provider: "local",
-    safetyMultiplier: 2.0,
+  rateLimit: {
+    maxEventsPerHour: null,
   },
   warnings: [0.5, 0.75, 0.9],
-  unknownModel: "fallback",
   enforcement: {
     failClosed: false,
-  },
-  models: {
-    "claude-sonnet-*": { inputPerMillion: 3, outputPerMillion: 15 },
-    "claude-opus-*": { inputPerMillion: 15, outputPerMillion: 75 },
-    "gpt-*": { inputPerMillion: 5, outputPerMillion: 15 },
-    "composer-*": { inputPerMillion: 3, outputPerMillion: 15 },
-    "grok-*": { inputPerMillion: 3, outputPerMillion: 15 },
-  },
-  fallback: {
-    inputPerMillion: 15,
-    outputPerMillion: 75,
   },
   excludeConversationIds: [],
 };
 
 const finiteNumber = v.pipe(v.number(), v.finite());
 const nonNegativeFinite = v.pipe(v.number(), v.finite(), v.minValue(0));
+/** API / block thresholds: 0–100 percent of Cursor's quota meter. */
+const percent0to100 = v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(100));
+/** Warning fractions of the configured block threshold (0–1). */
+const warningFraction = v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(1));
 
-/** Partial limits: either key may be omitted when hand-editing. */
-const LimitSchema = v.strictObject({
-  usd: v.optional(v.nullable(nonNegativeFinite)),
-  tokens: v.optional(v.nullable(nonNegativeFinite)),
+const QuotaSchema = v.strictObject({
+  cursorModelsBlockAtPercent: v.optional(percent0to100),
+  otherModelsBlockAtPercent: v.optional(percent0to100),
+  totalBlockAtPercent: v.optional(v.nullable(percent0to100)),
+  maxStaleMs: v.optional(nonNegativeFinite),
+  cacheTtlMs: v.optional(nonNegativeFinite),
 });
 
-/** Full rates for entries under `models` — a half-defined rate is wrong. */
-const ModelRateSchema = v.strictObject({
-  inputPerMillion: nonNegativeFinite,
-  outputPerMillion: nonNegativeFinite,
-  reasoningPerMillion: v.optional(nonNegativeFinite),
-});
-
-/** Partial rates for `fallback`, which merges onto defaults. */
-const PartialModelRateSchema = v.strictObject({
-  inputPerMillion: v.optional(nonNegativeFinite),
-  outputPerMillion: v.optional(nonNegativeFinite),
-  reasoningPerMillion: v.optional(nonNegativeFinite),
+const RateLimitSchema = v.strictObject({
+  maxEventsPerHour: v.optional(v.nullable(v.pipe(v.number(), v.finite(), v.minValue(0)))),
 });
 
 const ConfigFileSchema = v.strictObject({
   // Common hand-edit annotations; ignored at runtime.
   $schema: v.optional(v.string()),
   _comment: v.optional(v.string()),
-  limits: v.optional(
-    v.strictObject({
-      rollingHour: v.optional(LimitSchema),
-      calendarDay: v.optional(LimitSchema),
-    }),
-  ),
-  accounting: v.optional(
-    v.strictObject({
-      provider: v.optional(v.literal("local")),
-      safetyMultiplier: v.optional(v.pipe(finiteNumber, v.minValue(0))),
-    }),
-  ),
-  warnings: v.optional(v.array(v.pipe(finiteNumber, v.minValue(0), v.maxValue(1)))),
-  unknownModel: v.optional(v.picklist(["fallback", "block"] as const)),
+  quota: v.optional(QuotaSchema),
+  rateLimit: v.optional(RateLimitSchema),
+  warnings: v.optional(v.array(warningFraction)),
   enforcement: v.optional(
     v.strictObject({
       failClosed: v.optional(v.boolean()),
     }),
   ),
-  models: v.optional(v.record(v.string(), ModelRateSchema)),
-  fallback: v.optional(PartialModelRateSchema),
   excludeConversationIds: v.optional(v.array(v.string())),
 });
 
@@ -137,33 +120,27 @@ export function parseConfig(raw: unknown): Config {
   }
 
   return {
-    limits: {
-      rollingHour: {
-        ...DEFAULT_CONFIG.limits.rollingHour,
-        ...parsed.limits?.rollingHour,
-      },
-      calendarDay: {
-        ...DEFAULT_CONFIG.limits.calendarDay,
-        ...parsed.limits?.calendarDay,
-      },
+    quota: {
+      cursorModelsBlockAtPercent:
+        parsed.quota?.cursorModelsBlockAtPercent ?? DEFAULT_CONFIG.quota.cursorModelsBlockAtPercent,
+      otherModelsBlockAtPercent:
+        parsed.quota?.otherModelsBlockAtPercent ?? DEFAULT_CONFIG.quota.otherModelsBlockAtPercent,
+      totalBlockAtPercent:
+        parsed.quota?.totalBlockAtPercent === undefined
+          ? DEFAULT_CONFIG.quota.totalBlockAtPercent
+          : parsed.quota.totalBlockAtPercent,
+      maxStaleMs: parsed.quota?.maxStaleMs ?? DEFAULT_CONFIG.quota.maxStaleMs,
+      cacheTtlMs: parsed.quota?.cacheTtlMs ?? DEFAULT_CONFIG.quota.cacheTtlMs,
     },
-    accounting: {
-      provider: "local",
-      safetyMultiplier:
-        parsed.accounting?.safetyMultiplier ?? DEFAULT_CONFIG.accounting.safetyMultiplier,
+    rateLimit: {
+      maxEventsPerHour:
+        parsed.rateLimit?.maxEventsPerHour === undefined
+          ? DEFAULT_CONFIG.rateLimit.maxEventsPerHour
+          : parsed.rateLimit.maxEventsPerHour,
     },
     warnings: parsed.warnings ?? DEFAULT_CONFIG.warnings,
-    unknownModel: parsed.unknownModel ?? DEFAULT_CONFIG.unknownModel,
     enforcement: {
       failClosed: parsed.enforcement?.failClosed ?? DEFAULT_CONFIG.enforcement.failClosed,
-    },
-    models: {
-      ...DEFAULT_CONFIG.models,
-      ...(parsed.models ?? {}),
-    },
-    fallback: {
-      ...DEFAULT_CONFIG.fallback,
-      ...parsed.fallback,
     },
     excludeConversationIds: parsed.excludeConversationIds ?? [],
   };
@@ -212,75 +189,37 @@ export function loadConfigForRead(home?: string): { config: Config; warning?: st
   }
 }
 
-function sameRate(a: ModelRate, b: ModelRate): boolean {
-  return (
-    a.inputPerMillion === b.inputPerMillion &&
-    a.outputPerMillion === b.outputPerMillion &&
-    (a.reasoningPerMillion ?? undefined) === (b.reasoningPerMillion ?? undefined)
-  );
-}
-
-function serializeLimit(limit: Limit, defaults: Limit): Partial<Limit> | undefined {
-  const out: Partial<Limit> = {};
-  if (limit.usd !== defaults.usd) out.usd = limit.usd;
-  if (limit.tokens !== defaults.tokens) out.tokens = limit.tokens;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-/** Persist only overrides so default model rates stay code-owned. */
+/** Persist only overrides so defaults stay code-owned. */
 export function serializeConfig(config: Config): Record<string, unknown> {
   const validated = parseConfig(config);
   const file: Record<string, unknown> = {};
 
-  const rollingHour = serializeLimit(
-    validated.limits.rollingHour,
-    DEFAULT_CONFIG.limits.rollingHour,
-  );
-  const calendarDay = serializeLimit(
-    validated.limits.calendarDay,
-    DEFAULT_CONFIG.limits.calendarDay,
-  );
-  if (rollingHour || calendarDay) {
-    file.limits = {
-      ...(rollingHour ? { rollingHour } : {}),
-      ...(calendarDay ? { calendarDay } : {}),
-    };
+  const quota: Record<string, unknown> = {};
+  for (const key of [
+    "cursorModelsBlockAtPercent",
+    "otherModelsBlockAtPercent",
+    "totalBlockAtPercent",
+    "maxStaleMs",
+    "cacheTtlMs",
+  ] as const) {
+    if (validated.quota[key] !== DEFAULT_CONFIG.quota[key]) {
+      quota[key] = validated.quota[key];
+    }
+  }
+  if (Object.keys(quota).length > 0) {
+    file.quota = quota;
   }
 
-  if (
-    validated.accounting.safetyMultiplier !== DEFAULT_CONFIG.accounting.safetyMultiplier
-  ) {
-    file.accounting = {
-      provider: "local",
-      safetyMultiplier: validated.accounting.safetyMultiplier,
-    };
+  if (validated.rateLimit.maxEventsPerHour !== DEFAULT_CONFIG.rateLimit.maxEventsPerHour) {
+    file.rateLimit = { maxEventsPerHour: validated.rateLimit.maxEventsPerHour };
   }
 
   if (JSON.stringify(validated.warnings) !== JSON.stringify(DEFAULT_CONFIG.warnings)) {
     file.warnings = validated.warnings;
   }
 
-  if (validated.unknownModel !== DEFAULT_CONFIG.unknownModel) {
-    file.unknownModel = validated.unknownModel;
-  }
-
   if (validated.enforcement.failClosed !== DEFAULT_CONFIG.enforcement.failClosed) {
     file.enforcement = { failClosed: validated.enforcement.failClosed };
-  }
-
-  const models: Record<string, ModelRate> = {};
-  for (const [pattern, rate] of Object.entries(validated.models)) {
-    const baseline = DEFAULT_CONFIG.models[pattern];
-    if (!baseline || !sameRate(rate, baseline)) {
-      models[pattern] = rate;
-    }
-  }
-  if (Object.keys(models).length > 0) {
-    file.models = models;
-  }
-
-  if (!sameRate(validated.fallback, DEFAULT_CONFIG.fallback)) {
-    file.fallback = validated.fallback;
   }
 
   if (validated.excludeConversationIds.length > 0) {

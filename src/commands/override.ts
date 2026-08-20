@@ -15,5 +15,5 @@ export function overrideCommand(spec: string | undefined): string {
   }
   const until = new Date(Date.now() + ms);
   setState(db, "override_until", until.toISOString());
-  return `Override active until ${until.toLocaleString()}. Usage is still recorded.\n`;
+  return `Override active until ${until.toLocaleString()}. Events are still recorded.\n`;
 }

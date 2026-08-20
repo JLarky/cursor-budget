@@ -11,14 +11,6 @@ export interface UsageRow {
   generation_id?: string;
   event_type: string;
   model?: string;
-  model_id?: string;
-  observable_input_tokens: number;
-  observable_output_tokens: number;
-  observable_reasoning_tokens: number;
-  estimated_tokens: number;
-  observable_cost_usd: number;
-  estimated_cost_usd: number;
-  metadata?: string;
   dedupe_key: string;
 }
 
@@ -52,10 +44,8 @@ export function insertUsageEvent(db: DatabaseSync, row: UsageRow): boolean {
   const result = db
     .prepare(
       `INSERT OR IGNORE INTO usage_events (
-        timestamp, conversation_id, generation_id, event_type, model, model_id,
-        observable_input_tokens, observable_output_tokens, observable_reasoning_tokens,
-        estimated_tokens, observable_cost_usd, estimated_cost_usd, metadata, dedupe_key
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        timestamp, conversation_id, generation_id, event_type, model, dedupe_key
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
     )
     .run(
       row.timestamp,
@@ -63,65 +53,37 @@ export function insertUsageEvent(db: DatabaseSync, row: UsageRow): boolean {
       row.generation_id ?? null,
       row.event_type,
       row.model ?? null,
-      row.model_id ?? null,
-      row.observable_input_tokens,
-      row.observable_output_tokens,
-      row.observable_reasoning_tokens,
-      row.estimated_tokens,
-      row.observable_cost_usd,
-      row.estimated_cost_usd,
-      row.metadata ?? null,
       row.dedupe_key,
     );
   return Number(result.changes) > 0;
 }
 
-export function sumUsage(
+/** Count recorded events in `[from, to]` (backstop rate limit). */
+export function countEvents(
   db: DatabaseSync,
   from: Date,
   to: Date,
   excludeConversationIds: string[] = [],
-): {
-  input: number;
-  output: number;
-  reasoning: number;
-  estimatedTokens: number;
-  observableCost: number;
-  estimatedCost: number;
-} {
+): number {
   const excluded = excludeConversationIds.filter(Boolean);
   const placeholders = excluded.map(() => "?").join(", ");
   const excludeClause =
-    excluded.length > 0 ? `AND (conversation_id IS NULL OR conversation_id NOT IN (${placeholders}))` : "";
+    excluded.length > 0
+      ? `AND (conversation_id IS NULL OR conversation_id NOT IN (${placeholders}))`
+      : "";
   const row = db
     .prepare(
-      `SELECT
-        COALESCE(SUM(observable_input_tokens), 0) AS input,
-        COALESCE(SUM(observable_output_tokens), 0) AS output,
-        COALESCE(SUM(observable_reasoning_tokens), 0) AS reasoning,
-        COALESCE(SUM(estimated_tokens), 0) AS estimatedTokens,
-        COALESCE(SUM(observable_cost_usd), 0) AS observableCost,
-        COALESCE(SUM(estimated_cost_usd), 0) AS estimatedCost
-      FROM usage_events
-      WHERE timestamp >= ? AND timestamp <= ? ${excludeClause}`,
+      `SELECT COUNT(*) AS n FROM usage_events
+       WHERE timestamp >= ? AND timestamp <= ? ${excludeClause}`,
     )
-    .get(from.toISOString(), to.toISOString(), ...excluded) as {
-    input: number;
-    output: number;
-    reasoning: number;
-    estimatedTokens: number;
-    observableCost: number;
-    estimatedCost: number;
-  };
-  return row;
+    .get(from.toISOString(), to.toISOString(), ...excluded) as { n: number | bigint };
+  return Number(row.n);
 }
 
 export function listRecentEvents(db: DatabaseSync, limit = 20): UsageRow[] {
   return db
     .prepare(
-      `SELECT timestamp, conversation_id, generation_id, event_type, model, model_id,
-              observable_input_tokens, observable_output_tokens, observable_reasoning_tokens,
-              estimated_tokens, observable_cost_usd, estimated_cost_usd, metadata, dedupe_key
+      `SELECT timestamp, conversation_id, generation_id, event_type, model, dedupe_key
        FROM usage_events
        ORDER BY timestamp DESC
        LIMIT ?`,
@@ -142,39 +104,12 @@ export function setState(db: DatabaseSync, key: string, value: string): void {
   ).run(key, value);
 }
 
-export function insertContextSnapshot(
+export function hasWarning(
   db: DatabaseSync,
-  row: {
-    timestamp: string;
-    conversation_id?: string;
-    generation_id?: string;
-    context_tokens?: number;
-    context_window_size?: number;
-    context_usage_percent?: number;
-    trigger?: string;
-    metadata?: string;
-    dedupe_key: string;
-  },
-): void {
-  db.prepare(
-    `INSERT OR IGNORE INTO context_snapshots (
-      timestamp, conversation_id, generation_id, context_tokens, context_window_size,
-      context_usage_percent, trigger, metadata, dedupe_key
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    row.timestamp,
-    row.conversation_id ?? null,
-    row.generation_id ?? null,
-    row.context_tokens ?? null,
-    row.context_window_size ?? null,
-    row.context_usage_percent ?? null,
-    row.trigger ?? null,
-    row.metadata ?? null,
-    row.dedupe_key,
-  );
-}
-
-export function hasWarning(db: DatabaseSync, windowId: string, threshold: number, periodKey: string): boolean {
+  windowId: string,
+  threshold: number,
+  periodKey: string,
+): boolean {
   const row = db
     .prepare(
       "SELECT 1 AS ok FROM warning_emissions WHERE window_id = ? AND threshold = ? AND period_key = ?",
