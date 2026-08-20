@@ -18,7 +18,7 @@ export interface QuotaConfig {
    * Optional block on `totalPercentUsed` (**0–100**). `null` disables.
    */
   totalBlockAtPercent: number | null;
-  /** Beyond this age, a stale-cache snapshot is treated as unknown (fail open). */
+  /** Beyond this age, a stale-cache snapshot is treated as unknown usage. */
   maxStaleMs: number;
   /** Soft TTL for the SQLite usage cache before a network refresh is attempted. */
   cacheTtlMs: number;
@@ -38,6 +38,13 @@ export interface Config {
    */
   warnings: number[];
   enforcement: {
+    /**
+     * When usage cannot be determined (auth expired, API down, snapshot older
+     * than `maxStaleMs`), block instead of allowing. Default `true`: a guard
+     * that silently stops guarding is worse than one that gets in the way.
+     * Escape hatches stay open — `override`, `except add`, and every read-only
+     * CLI command keep working while the gate is closed.
+     */
     failClosed: boolean;
   };
   excludeConversationIds: string[];
@@ -56,7 +63,7 @@ export const DEFAULT_CONFIG: Config = {
   },
   warnings: [0.5, 0.75, 0.9],
   enforcement: {
-    failClosed: false,
+    failClosed: true,
   },
   excludeConversationIds: [],
 };

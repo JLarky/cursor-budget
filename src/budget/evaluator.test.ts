@@ -117,11 +117,26 @@ test("null percent field does not block (absent is not zero)", () => {
   assert.equal(decision.reasons.length, 0);
 });
 
-test("null periodUsage skips primary gate (fail open for quota)", () => {
+test("unknown usage blocks by default (failClosed is on)", () => {
+  const decision = evaluate({
+    periodUsage: null,
+    usageUnknownReason: "Cursor auth expired or missing.",
+    eventsLastHour: 0,
+    config: DEFAULT_CONFIG,
+    overrideUntil: null,
+  });
+  assert.equal(decision.allow, false);
+  assert.equal(decision.reasons[0]?.metric, "usageUnknown");
+  assert.match(decision.reasons[0]?.detail ?? "", /auth expired/);
+});
+
+test("unknown usage allows when failClosed is turned off", () => {
   const config = structuredClone(DEFAULT_CONFIG);
+  config.enforcement.failClosed = false;
   config.quota.cursorModelsBlockAtPercent = 1;
   const decision = evaluate({
     periodUsage: null,
+    usageUnknownReason: "network down",
     eventsLastHour: 0,
     config,
     overrideUntil: null,
@@ -129,8 +144,50 @@ test("null periodUsage skips primary gate (fail open for quota)", () => {
   assert.equal(decision.allow, true);
 });
 
+test("unknown usage still yields to override", () => {
+  const decision = evaluate({
+    periodUsage: null,
+    usageUnknownReason: "network down",
+    eventsLastHour: 0,
+    config: DEFAULT_CONFIG,
+    overrideUntil: new Date(Date.now() + 60_000),
+  });
+  assert.equal(decision.allow, true);
+  assert.equal(decision.overrideActive, true);
+});
+
+test("unknown usage still yields to an excepted conversation", () => {
+  const decision = evaluate({
+    periodUsage: null,
+    usageUnknownReason: "network down",
+    eventsLastHour: 0,
+    config: DEFAULT_CONFIG,
+    overrideUntil: null,
+    excluded: true,
+  });
+  assert.equal(decision.allow, true);
+  assert.equal(decision.excluded, true);
+});
+
+test("block message explains why usage is unknown", () => {
+  const decision = evaluate({
+    periodUsage: null,
+    usageUnknownReason: "cached snapshot is 3.0h old (max 1.0h)",
+    eventsLastHour: 0,
+    config: DEFAULT_CONFIG,
+    overrideUntil: null,
+  });
+  const message = formatBlockMessage(decision, null, 0, DEFAULT_CONFIG, "abc");
+  assert.match(message, /could not be determined/);
+  assert.match(message, /3\.0h old/);
+  assert.match(message, /failClosed/);
+  assert.match(message, /cursor-budget override 30m/);
+});
+
 test("event-count backstop: under threshold allows", () => {
   const config = structuredClone(DEFAULT_CONFIG);
+  // Isolate the backstop: without this, null usage would block on its own.
+  config.enforcement.failClosed = false;
   config.rateLimit.maxEventsPerHour = 100;
   const decision = evaluate({
     periodUsage: null,
@@ -143,6 +200,7 @@ test("event-count backstop: under threshold allows", () => {
 
 test("event-count backstop: at threshold blocks", () => {
   const config = structuredClone(DEFAULT_CONFIG);
+  config.enforcement.failClosed = false;
   config.rateLimit.maxEventsPerHour = 100;
   const decision = evaluate({
     periodUsage: null,

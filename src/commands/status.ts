@@ -61,6 +61,7 @@ export async function statusCommand(home?: string): Promise<string> {
       ? `  Events: ${eventsLastHour} / ${maxEvents}`
       : `  Events: ${eventsLastHour} (rate limit off)`,
     "",
+    `On unknown usage: ${config.enforcement.failClosed ? "block (failClosed)" : "allow (failClosed off)"}`,
     `Override: ${overrideActive ? `until ${overrideUntil?.toLocaleString()}` : "none"}`,
     `Exceptions: ${
       config.excludeConversationIds.length === 0

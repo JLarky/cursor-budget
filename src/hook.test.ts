@@ -9,7 +9,7 @@ import {
   type CursorPeriodUsageResult,
 } from "./accounting/cursor-api.js";
 import { DEFAULT_CONFIG } from "./config.js";
-import { hasWarning, openDb } from "./db/client.js";
+import { hasWarning, openDb, setState } from "./db/client.js";
 import { handleHook, resolvePeriodUsage } from "./hook.js";
 
 function fakeResult(
@@ -151,71 +151,113 @@ test("§5 stale-cache within maxStaleMs gates normally", async () => {
   assert.match(String(response.user_message), /stale/);
 });
 
-test("§5 stale-cache beyond maxStaleMs fails open", async () => {
+test("§5 stale-cache beyond maxStaleMs blocks as unknown usage", async () => {
   const config = structuredClone(DEFAULT_CONFIG);
   config.quota.cursorModelsBlockAtPercent = 90;
   config.quota.maxStaleMs = 60_000;
-  const response = await handleHook(
+  const deps = {
+    getPeriodUsage: async () =>
+      fakeResult({
+        source: "stale-cache" as const,
+        stale: true,
+        ageMs: 120_000,
+        autoPercentUsed: 99,
+      }),
+  };
+  const closed = await handleHook(
     { hook_event_name: "preToolUse", conversation_id: "sess-stale-old" },
     config,
-    {
-      getPeriodUsage: async () =>
-        fakeResult({
-          source: "stale-cache",
-          stale: true,
-          ageMs: 120_000,
-          autoPercentUsed: 99,
-        }),
-    },
+    deps,
   );
-  assert.equal(response.permission, "allow");
+  assert.equal(closed.permission, "deny");
+  assert.match(String(closed.user_message), /could not be determined/);
+  assert.match(String(closed.user_message), /2m old/);
+
+  config.enforcement.failClosed = false;
+  const open = await handleHook(
+    { hook_event_name: "preToolUse", conversation_id: "sess-stale-old" },
+    config,
+    deps,
+  );
+  assert.equal(open.permission, "allow");
 });
 
-test("§5 CursorUsageUnavailableError fails open unless failClosed", async () => {
+test("§5 CursorUsageUnavailableError blocks by default, allows when failClosed is off", async () => {
   const config = structuredClone(DEFAULT_CONFIG);
   config.quota.cursorModelsBlockAtPercent = 1;
+  const deps = {
+    getPeriodUsage: async (): Promise<CursorPeriodUsageResult> => {
+      throw new CursorUsageUnavailableError("no cache");
+    },
+  };
+  const closed = await handleHook(
+    { hook_event_name: "preToolUse", conversation_id: "sess-unavail" },
+    config,
+    deps,
+  );
+  assert.equal(closed.permission, "deny");
+  assert.match(String(closed.user_message), /could not be determined/);
+  assert.match(String(closed.user_message), /no cache/);
+  // Recovery must be reachable from the block message itself.
+  assert.match(String(closed.user_message), /cursor-budget override 30m/);
+  assert.match(String(closed.user_message), /except add sess-unavail/);
+
+  config.enforcement.failClosed = false;
   const open = await handleHook(
     { hook_event_name: "preToolUse", conversation_id: "sess-unavail" },
     config,
-    {
-      getPeriodUsage: async () => {
-        throw new CursorUsageUnavailableError("no cache");
-      },
-    },
+    deps,
   );
   assert.equal(open.permission, "allow");
-
-  config.enforcement.failClosed = true;
-  const closed = await handleHook(
-    { hook_event_name: "preToolUse", conversation_id: "sess-unavail-closed" },
-    config,
-    {
-      getPeriodUsage: async () => {
-        throw new CursorUsageUnavailableError("no cache");
-      },
-    },
-  );
-  assert.equal(closed.permission, "deny");
-  assert.match(String(closed.user_message), /failed closed/);
 });
 
-test("§5 HTTP 401 fails open with re-auth message", async () => {
+test("§5 HTTP 401 blocks by default and names the fix", async () => {
   const config = structuredClone(DEFAULT_CONFIG);
   config.quota.cursorModelsBlockAtPercent = 1;
-  const response = await handleHook(
+  const deps = {
+    getPeriodUsage: async (): Promise<CursorPeriodUsageResult> => {
+      throw new CursorUsageUnavailableError(
+        "no cache",
+        new CursorApiError(401, "unauthorized"),
+      );
+    },
+  };
+  const closed = await handleHook(
     { hook_event_name: "preToolUse", conversation_id: "sess-401" },
     config,
-    {
-      getPeriodUsage: async () => {
-        throw new CursorUsageUnavailableError(
-          "no cache",
-          new CursorApiError(401, "unauthorized"),
-        );
-      },
-    },
+    deps,
   );
-  assert.equal(response.permission, "allow");
-  assert.match(String(response.user_message), /cursor-agent/);
+  assert.equal(closed.permission, "deny");
+  assert.match(String(closed.user_message), /cursor-agent/);
+
+  config.enforcement.failClosed = false;
+  const open = await handleHook(
+    { hook_event_name: "preToolUse", conversation_id: "sess-401" },
+    config,
+    deps,
+  );
+  assert.equal(open.permission, "allow");
+  assert.match(String(open.user_message), /cursor-agent/);
+});
+
+test("§5 an active override survives unknown usage", async () => {
+  const home = mkdtempSync(join(tmpdir(), "cursor-budget-override-"));
+  try {
+    setState(openDb(home), "override_until", new Date(Date.now() + 60_000).toISOString());
+    const response = await handleHook(
+      { hook_event_name: "preToolUse", conversation_id: "sess-override" },
+      structuredClone(DEFAULT_CONFIG),
+      {
+        home,
+        getPeriodUsage: async (): Promise<CursorPeriodUsageResult> => {
+          throw new CursorUsageUnavailableError("no cache");
+        },
+      },
+    );
+    assert.equal(response.permission, "allow");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("§5 null percent field does not block", async () => {

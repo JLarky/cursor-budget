@@ -7,7 +7,12 @@ import {
   type GetCursorPeriodUsageOptions,
 } from "./accounting/index.js";
 import type { CursorHookEvent } from "./accounting/types.js";
-import { evaluate, formatBlockMessage, formatPercentValue } from "./budget/evaluator.js";
+import {
+  evaluate,
+  formatAge,
+  formatBlockMessage,
+  formatPercentValue,
+} from "./budget/evaluator.js";
 import { rollingHour } from "./budget/windows.js";
 import type { Config } from "./config.js";
 import { ensureConfig } from "./config.js";
@@ -69,7 +74,19 @@ export async function handleHook(
     return await dispatch(event, eventName, excluded, resolved, deps);
   } catch (error) {
     if (resolved.enforcement.failClosed && ENFORCE_EVENTS.has(eventName) && !excluded) {
-      const message = `cursor-budget failed closed: ${error instanceof Error ? error.message : String(error)}\nSession id: ${conversationId || "unknown"}`;
+      // Reached only when the guard itself broke (e.g. unreadable local db), so
+      // the override escape hatch may be unreadable too. Lead with the one that
+      // is config-only and therefore still works.
+      const id = conversationId || "unknown";
+      const message = [
+        `cursor-budget failed closed: ${error instanceof Error ? error.message : String(error)}`,
+        "",
+        `Session id: ${id}`,
+        "",
+        "Recover with:",
+        `  cursor-budget except add ${id}`,
+        "  cursor-budget status",
+      ].join("\n");
       return deny(message);
     }
     return allow();
@@ -91,10 +108,15 @@ async function dispatch(
     const hourWindow = rollingHour(now);
     const eventsLastHour = await provider.countEvents(hourWindow);
 
-    const { periodUsage, authHint } = await resolvePeriodUsage(config, deps, now);
+    const { periodUsage, usageUnknownReason, authHint } = await resolvePeriodUsage(
+      config,
+      deps,
+      now,
+    );
     const overrideUntil = readOverrideUntil(home);
     const decision = evaluate({
       periodUsage,
+      usageUnknownReason,
       eventsLastHour,
       config,
       overrideUntil,
@@ -133,14 +155,23 @@ async function dispatch(
 }
 
 /**
- * Apply the §5 failure policy for the primary (Cursor API) gate.
- * Returns `periodUsage: null` when the primary gate must fail open.
+ * Resolve the primary (Cursor API) gate input.
+ *
+ * Never throws: every "we don't know current usage" path returns
+ * `periodUsage: null` plus a human-readable `usageUnknownReason`. Deciding what
+ * that means is `evaluate`'s job, which keeps override/exception short-circuits
+ * ahead of the fail-closed deny — otherwise an expired token would lock the
+ * editor with no way back in.
  */
 export async function resolvePeriodUsage(
   config: Config,
   deps: HookDeps = {},
   now: Date = new Date(),
-): Promise<{ periodUsage: CursorPeriodUsageResult | null; authHint?: string }> {
+): Promise<{
+  periodUsage: CursorPeriodUsageResult | null;
+  usageUnknownReason?: string;
+  authHint?: string;
+}> {
   const getUsage = deps.getPeriodUsage ?? getCursorPeriodUsage;
   try {
     const result = await getUsage({
@@ -150,27 +181,24 @@ export async function resolvePeriodUsage(
     });
 
     if (result.source === "stale-cache" && result.ageMs > config.quota.maxStaleMs) {
-      return { periodUsage: null };
+      return {
+        periodUsage: null,
+        usageUnknownReason: `cached snapshot is ${formatAge(result.ageMs)} old (max ${formatAge(config.quota.maxStaleMs)})${result.refreshError ? `; refresh failed: ${result.refreshError}` : ""}`,
+      };
     }
     return { periodUsage: result };
   } catch (error) {
     if (isAuthFailure(error)) {
+      const hint =
+        "Cursor auth expired or missing. Re-authenticate with cursor-agent, then retry.";
       return {
         periodUsage: null,
-        authHint:
-          "cursor-budget: Cursor auth expired or missing. Re-authenticate with cursor-agent, then retry.",
+        usageUnknownReason: hint,
+        authHint: `cursor-budget: ${hint}`,
       };
     }
-    if (error instanceof CursorUsageUnavailableError) {
-      if (config.enforcement.failClosed) {
-        throw error;
-      }
-      return { periodUsage: null };
-    }
-    if (config.enforcement.failClosed) {
-      throw error;
-    }
-    return { periodUsage: null };
+    const detail = error instanceof Error ? error.message : String(error);
+    return { periodUsage: null, usageUnknownReason: detail };
   }
 }
 

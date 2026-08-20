@@ -1,4 +1,9 @@
-export type WindowId = "rollingHour" | "cursorModels" | "otherModels" | "totalQuota";
+export type WindowId =
+  | "rollingHour"
+  | "cursorModels"
+  | "otherModels"
+  | "totalQuota"
+  | "usageUnknown";
 
 export interface TimeWindow {
   id: WindowId;

@@ -9,14 +9,18 @@ export type BlockMetric =
   | "cursorModelsPercent"
   | "otherModelsPercent"
   | "totalPercent"
-  | "eventRate";
+  | "eventRate"
+  | "usageUnknown";
 
 export interface BlockReason {
   window: WindowId;
   windowLabel: string;
   metric: BlockMetric;
-  used: number;
-  limit: number;
+  /** Absent for `usageUnknown`, which has no measured value to compare. */
+  used?: number;
+  limit?: number;
+  /** Why usage could not be determined. Only set for `usageUnknown`. */
+  detail?: string;
 }
 
 export interface Evaluation {
@@ -32,13 +36,18 @@ export interface Evaluation {
  * Primary gate: Cursor dashboard percent meters (when `periodUsage` is usable).
  * Backstop: rolling-hour event count (always local).
  *
- * Callers must apply the §5 failure policy before passing `periodUsage`:
- * pass `null` when usage is unknown (too stale, unavailable, auth failure).
- * A `null` percent field inside a usable snapshot skips that meter (fail open),
- * never treating absent as 0.
+ * When usage could not be determined the caller passes `periodUsage: null` plus
+ * a `usageUnknownReason`. Under the default `failClosed: true` that is itself a
+ * block reason — an unreadable meter must not read as "plenty left". Override
+ * and exception both short-circuit above this, so the escape hatches still work
+ * while the gate is closed.
+ *
+ * A `null` percent field inside an otherwise usable snapshot skips just that
+ * meter, and never counts as 0.
  */
 export function evaluate(input: {
   periodUsage: CursorPeriodUsageResult | null;
+  usageUnknownReason?: string | null;
   eventsLastHour: number;
   config: Config;
   overrideUntil: Date | null;
@@ -71,6 +80,13 @@ export function evaluate(input: {
 
   if (input.periodUsage) {
     reasons.push(...quotaReasons(input.periodUsage.usage, input.config));
+  } else if (input.config.enforcement.failClosed) {
+    reasons.push({
+      window: "usageUnknown",
+      windowLabel: "Cursor usage",
+      metric: "usageUnknown",
+      detail: input.usageUnknownReason ?? "usage could not be determined",
+    });
   }
 
   const maxEvents = input.config.rateLimit.maxEventsPerHour;
@@ -153,12 +169,19 @@ export function formatBlockMessage(
   const lines = ["Cursor Agent blocked by cursor-budget.", "", `Session id: ${id}`, ""];
 
   if (primary) {
-    if (primary.metric === "eventRate") {
+    if (primary.metric === "usageUnknown") {
+      lines.push("Cursor usage could not be determined:");
+      lines.push(`  ${primary.detail ?? "unknown"}`);
+      lines.push("");
+      lines.push("Blocked because enforcement.failClosed is on (the default).");
+    } else if (primary.metric === "eventRate") {
       lines.push("Rolling-hour event rate limit reached:");
       lines.push(`  ${primary.used} / ${primary.limit} events`);
     } else {
       lines.push(`${primary.windowLabel} quota limit reached:`);
-      lines.push(`  ${formatPercentValue(primary.used)} / ${formatPercentValue(primary.limit)} used`);
+      lines.push(
+        `  ${formatPercentValue(primary.used ?? Number.NaN)} / ${formatPercentValue(primary.limit ?? Number.NaN)} used`,
+      );
     }
     lines.push("");
   }
