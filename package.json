@@ -12,7 +12,6 @@
     "llm",
     "usage"
   ],
-  "private": true,
   "type": "module",
   "bin": {
     "cursor-budget": "./dist/cli.js"
@@ -34,5 +33,13 @@
   "files": [
     "dist",
     "README.md"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JLarky/cursor-limit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JLarky/cursor-limit/issues"
+  },
+  "homepage": "https://github.com/JLarky/cursor-limit#readme"
 }
