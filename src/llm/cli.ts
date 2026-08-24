@@ -63,7 +63,9 @@ async function main(): Promise<void> {
         respondToClaudeHook(event);
         return;
       }
-      throw new Error("Usage: llm-budget claude install | claude uninstall");
+      throw new Error(
+        "Usage:\n  llm-budget claude install\n  llm-budget claude uninstall",
+      );
     }
     case "codex": {
       const sub = rest[0];
@@ -75,7 +77,9 @@ async function main(): Promise<void> {
         process.stdout.write(uninstallCodexShim());
         return;
       }
-      throw new Error("Usage: llm-budget codex install | codex uninstall");
+      throw new Error(
+        "Usage:\n  llm-budget codex install\n  llm-budget codex uninstall",
+      );
     }
     case "watchdog": {
       const once = rest.includes("--once");
@@ -118,7 +122,7 @@ async function main(): Promise<void> {
     }
     case "import-rates": {
       const src = rest[0];
-      if (!src) throw new Error("Usage: llm-budget import-rates <pricing-cache.json|api.json>");
+      if (!src) throw new Error("Usage: llm-budget import-rates <source-file>");
       process.stdout.write(importRatesCommand(src));
       return;
     }
@@ -216,14 +220,15 @@ Usage:
   llm-budget cursor status
   llm-budget cursor spending
   llm-budget cursor config
-  llm-budget cursor override 15m|30m|1h|off
+  llm-budget cursor override <duration>
+  llm-budget cursor override off
   llm-budget cursor except add <session-id>
   llm-budget cursor except remove <session-id>
   llm-budget cursor except list
   llm-budget cursor history
   llm-budget cursor install
   llm-budget cursor uninstall [--purge-data]
-  llm-budget cursor hook            # used by the installed hooks
+  llm-budget cursor hook                # Used by the installed hooks
 
 Primary gate uses Cursor dashboard period usage (Cursor Models / Other Models).
 Backstop is a local rolling-hour event count.
@@ -232,18 +237,21 @@ Backstop is a local rolling-hour event count.
 const HELP = `llm-budget — usage guards for Cursor Agent, Claude Code, and Codex
 
 Usage:
-  llm-budget status                     # all agents: claude, codex, cursor
-  llm-budget override 15m|30m|1h|off
+  llm-budget status                     # Show combined status for all agents
+  llm-budget override <duration>        # Temporarily bypass Claude and Codex gates
+  llm-budget override off               # Clear the Claude and Codex override
   llm-budget except add <session-id>
   llm-budget except remove <session-id>
   llm-budget except list
   llm-budget history
   llm-budget config
-  llm-budget import-rates <models-dev-cache.json>
-  llm-budget claude install | claude uninstall
-  llm-budget codex install | codex uninstall
-  llm-budget watchdog [--interval 15s] [--once]
-  llm-budget cursor <command>           # Cursor Agent guard (see: cursor help)
+  llm-budget import-rates <source-file>
+  llm-budget claude install             # Register Claude Code hooks
+  llm-budget claude uninstall           # Remove Claude Code hooks
+  llm-budget codex install              # Install the Codex PATH shim
+  llm-budget codex uninstall            # Remove the Codex PATH shim
+  llm-budget watchdog [--interval <duration>] [--once]
+  llm-budget cursor help                # Show Cursor Agent guard commands
 
 Scopes:
   claude  install/uninstall native Claude Code hooks (UserPromptSubmit, PreToolUse)

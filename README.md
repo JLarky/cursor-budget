@@ -40,7 +40,7 @@ llm-budget codex install     # write the Codex PATH shim (then add it to PATH)
 
 ### Cursor Agent scope
 
-`cursor install` writes a wrapper to `~/.cursor/hooks/llm-budget` and registers
+`llm-budget cursor install` writes a wrapper to `~/.cursor/hooks/llm-budget` and registers
 it in `~/.cursor/hooks.json`. On every prompt and tool call it checks real
 usage from the Cursor dashboard API and denies requests past your threshold.
 Undo with `llm-budget cursor uninstall`.
@@ -130,18 +130,21 @@ expired token means the guard starts blocking.
 
 ## Commands
 
-Cursor-scope commands (prefix everything with `llm-budget cursor`, or run
-`llm-budget cursor help`):
+Cursor-scope commands (also available from `llm-budget cursor help`):
 
 | Command | |
 |---|---|
-| `status` | current usage, thresholds, override state, credential expiry |
-| `spending` | raw period usage from the API as JSON |
-| `override 15m\|30m\|1h\|off` | temporarily bypass all gates |
-| `except add\|remove\|list <id>` | permanently exempt a session |
-| `history` | recorded local events |
-| `config` | print resolved configuration |
-| `install` / `uninstall [--purge-data]` | manage hook registration |
+| `llm-budget cursor status` | current usage, thresholds, override state, credential expiry |
+| `llm-budget cursor spending` | raw period usage from the API as JSON |
+| `llm-budget cursor override <duration>` | temporarily bypass Cursor gates (e.g. `30m`) |
+| `llm-budget cursor override off` | clear the Cursor override |
+| `llm-budget cursor except add <session-id>` | permanently exempt a session |
+| `llm-budget cursor except remove <session-id>` | remove a session exception |
+| `llm-budget cursor except list` | list session exceptions |
+| `llm-budget cursor history` | recorded local events |
+| `llm-budget cursor config` | print resolved configuration |
+| `llm-budget cursor install` | manage hook registration |
+| `llm-budget cursor uninstall [--purge-data]` | remove hook registration |
 
 ## Claude Code & Codex scopes
 
@@ -174,7 +177,7 @@ Percentages are against a budget you define — explicit, not implied:
     "denominator": { "kind": "tokens", "weeklyTokens": 10000000 }
     // "denominator": { "kind": "usd", "weeklyUsd": 35 },
     //
-    // For USD, price models via `llm-budget import-rates` (see below) or
+    // For USD, price models via `llm-budget import-rates <source-file>` (see below) or
     // inline rates ($/1M tokens):
     // "rates": { "claude-sonnet-5": { "input": 3, "output": 15 } }
   },
@@ -195,9 +198,9 @@ Token totals count every billed bucket (input + output + reasoning + cache
 read + cache write), matching what your provider actually meters. With a USD
 denominator, models without rates make measured spend *missing money*, not
 zero money — the guard treats that as unknown usage and blocks under the
-default `failClosed: true` until you price them (`llm-budget import-rates` or
+default `failClosed: true` until you price them (`llm-budget import-rates <source-file>` or
 inline `budget.rates`). Set `failClosed: false` if you would rather be warned
-than blocked; `status` always lists unpriced models either way.
+than blocked; `llm-budget status` always lists unpriced models either way.
 
 ### Weekly boundary (pinned UTC week)
 
@@ -214,8 +217,8 @@ Claude Code hooks support blocking natively:
 
 ```sh
 npm run build
-node dist/llm/cli.js claude install     # registers UserPromptSubmit + PreToolUse in ~/.claude/settings.json
-node dist/llm/cli.js claude uninstall
+llm-budget claude install               # registers UserPromptSubmit + PreToolUse in ~/.claude/settings.json
+llm-budget claude uninstall
 ```
 
 Every prompt and tool call re-reads transcripts and blocks once either gate
@@ -234,9 +237,9 @@ billed, and blocking it would only make Claude keep working.
 Codex has no deny hooks, so enforcement is layered, and honestly partial:
 
 ```sh
-node dist/llm/cli.js codex install      # writes ~/.llm-budget/bin/codex shim
+llm-budget codex install                # writes ~/.llm-budget/bin/codex shim
 export PATH="$HOME/.llm-budget/bin:$PATH"   # put it in your shell profile
-node dist/llm/cli.js watchdog           # sidecar poller (default: every 15s)
+llm-budget watchdog                     # sidecar poller (default interval 15s)
 ```
 
 - **Shim**: installed as a `codex` entrypoint; consults the guard, then execs
@@ -260,15 +263,20 @@ guarantees, keep the percentage conservative.
 
 | Command | |
 |---|---|
-| `status` | per-tool window usage, thresholds, OpenAI's own Codex telemetry |
-| `override 15m\|30m\|1h\|off` | temporarily bypass all gates |
-| `except add\|remove\|list <session-id>` | exempt a session from counting and gating |
-| `history` | recent recorded token events |
-| `import-rates <models.dev-cache.json>` | build `~/.llm-budget/rates.json` from a models.dev catalog (e.g. token-tracker's `pricing-cache.json`) |
-| `claude install\|uninstall` | manage Claude Code hook registration |
-| `codex install\|uninstall` | manage the Codex PATH shim |
-| `watchdog [--interval 15s] [--once]` | stop running Codex sessions on trip |
-| `config` | print resolved configuration |
+| `llm-budget status` | per-tool window usage, thresholds, OpenAI's own Codex telemetry, Cursor Agent section |
+| `llm-budget override <duration>` | temporarily bypass Claude + Codex gates (e.g. `30m`) |
+| `llm-budget override off` | clear the Claude + Codex override |
+| `llm-budget except add <session-id>` | exempt a session from counting and gating |
+| `llm-budget except remove <session-id>` | remove a session exception |
+| `llm-budget except list` | list session exceptions |
+| `llm-budget history` | recent recorded token events |
+| `llm-budget import-rates <source-file>` | build `~/.llm-budget/rates.json` from a models.dev catalog (e.g. token-tracker's `pricing-cache.json`) |
+| `llm-budget claude install` | manage Claude Code hook registration |
+| `llm-budget claude uninstall` | remove Claude Code hook registration |
+| `llm-budget codex install` | install the Codex PATH shim |
+| `llm-budget codex uninstall` | remove the Codex PATH shim |
+| `llm-budget watchdog [--interval <duration>] [--once]` | stop running Codex sessions on trip |
+| `llm-budget config` | print resolved configuration |
 
 State lives in `~/.llm-budget/` (config, SQLite event store, rates) for the
 claude and codex scopes; the cursor scope keeps its own state in
