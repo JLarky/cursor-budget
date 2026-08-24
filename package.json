@@ -37,10 +37,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/JLarky/cursor-budget.git"
+    "url": "git+https://github.com/JLarky/llm-budget.git"
   },
   "bugs": {
-    "url": "https://github.com/JLarky/cursor-budget/issues"
+    "url": "https://github.com/JLarky/llm-budget/issues"
   },
-  "homepage": "https://github.com/JLarky/cursor-budget#readme"
+  "homepage": "https://github.com/JLarky/llm-budget#readme"
 }
