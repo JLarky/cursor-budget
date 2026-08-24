@@ -13,7 +13,7 @@ export function exceptCommand(args: string[], home?: string): string {
 
   if (actionOrId === "remove" || actionOrId === "rm") {
     const id = maybeId ? normalizeId(maybeId) : "";
-    if (!id) throw new Error("Usage: cursor-budget except remove <session-id>");
+    if (!id) throw new Error("Usage: llm-budget cursor except remove <session-id>");
     const next = config.excludeConversationIds.filter((existing) => existing !== id);
     writeConfig({ ...config, excludeConversationIds: next }, home);
     return next.length === config.excludeConversationIds.length
@@ -23,12 +23,12 @@ export function exceptCommand(args: string[], home?: string): string {
 
   if (actionOrId.startsWith("-")) {
     throw new Error(
-      "Usage: cursor-budget except add <session-id>\n       cursor-budget except remove <session-id>\n       cursor-budget except list",
+      "Usage: llm-budget cursor except add <session-id>\n       llm-budget cursor except remove <session-id>\n       llm-budget cursor except list",
     );
   }
   const id = normalizeId(actionOrId === "add" ? (maybeId ?? "") : actionOrId);
   if (!id || (actionOrId === "add" && !maybeId) || id.startsWith("-")) {
-    throw new Error("Usage: cursor-budget except add <session-id>");
+    throw new Error("Usage: llm-budget cursor except add <session-id>");
   }
   if (config.excludeConversationIds.includes(id)) {
     return `Already excepted: ${id}\n${formatList(config.excludeConversationIds)}`;

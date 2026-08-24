@@ -59,7 +59,7 @@ export async function statusCommand(home?: string): Promise<string> {
 
   return [
     ...(warning ? [warning, ""] : []),
-    "cursor-budget",
+    "llm-budget",
     "",
     ...periodLines,
     "",

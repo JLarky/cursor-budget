@@ -1,11 +1,12 @@
 {
-  "name": "cursor-budget",
+  "name": "llm-budget",
   "version": "0.1.0",
-  "description": "Stop Cursor Agent before you burn through your plan quota, using Cursor's own reported usage.",
+  "description": "Usage guards for Cursor Agent, Claude Code, and Codex — real reported usage, not estimates.",
   "license": "MIT",
   "keywords": [
-    "cursor",
     "cursor-agent",
+    "claude-code",
+    "codex",
     "hooks",
     "budget",
     "quota",
@@ -14,7 +15,7 @@
   ],
   "type": "module",
   "bin": {
-    "cursor-budget": "./dist/cli.js"
+    "llm-budget": "./dist/llm/cli.js"
   },
   "scripts": {
     "build": "tsc",
@@ -36,10 +37,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/JLarky/cursor-budget.git"
+    "url": "git+https://github.com/JLarky/llm-budget.git"
   },
   "bugs": {
-    "url": "https://github.com/JLarky/cursor-budget/issues"
+    "url": "https://github.com/JLarky/llm-budget/issues"
   },
-  "homepage": "https://github.com/JLarky/cursor-budget#readme"
+  "homepage": "https://github.com/JLarky/llm-budget#readme"
 }
