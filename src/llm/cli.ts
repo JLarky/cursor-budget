@@ -99,7 +99,7 @@ async function main(): Promise<void> {
       return;
     }
     case "status":
-      process.stdout.write(statusCommand());
+      process.stdout.write(await statusCommand());
       return;
     case "override":
       process.stdout.write(overrideCommand(rest[0]));
@@ -232,7 +232,7 @@ Backstop is a local rolling-hour event count.
 const HELP = `llm-budget — usage guards for Cursor Agent, Claude Code, and Codex
 
 Usage:
-  llm-budget status                     # Claude Code + Codex windows
+  llm-budget status                     # all agents: claude, codex, cursor
   llm-budget override 15m|30m|1h|off
   llm-budget except add <session-id>
   llm-budget except remove <session-id>
@@ -254,7 +254,7 @@ Weekly caps use a pinned UTC week (Monday 00:00). Percentages are against the
 budget denominator configured in ~/.llm-budget/config.json.
 `;
 
-function statusCommand(home = homedir()): string {
+async function statusCommand(home = homedir()): Promise<string> {
   const { config, warning } = loadLlmConfigForRead(home);
   const db = openLlmDb(home);
   const now = new Date();
@@ -322,11 +322,34 @@ function statusCommand(home = homedir()): string {
 
   const overrideRaw = getState(db, "override_until");
   lines.push("");
-  lines.push(`Override: ${overrideRaw ? `until ${overrideRaw}` : "none"}`);
+  lines.push(`Override: ${overrideRaw ? `until ${overrideRaw}` : "none"} (claude+codex)`);
   lines.push(
-    `Exceptions: ${config.excludeSessionIds.length > 0 ? config.excludeSessionIds.join(", ") : "none"}`,
+    `Exceptions: ${config.excludeSessionIds.length > 0 ? config.excludeSessionIds.join(", ") : "none"} (claude+codex)`,
   );
   lines.push("On unknown usage: block (failClosed)");
+
+  // Cursor Agent rides in the same status view so one command covers all
+  // three guards. Its dashboard state lives in ~/.cursor/llm-budget and may
+  // be unavailable offline — render whatever it reports, indented.
+  lines.push("");
+  lines.push("Cursor Agent:");
+  try {
+    const raw = await cursorStatusCommand(home);
+    const allLines = raw.split("\n");
+    const titleIdx = allLines.findIndex((l) => l.trim() === "llm-budget");
+    const body = (titleIdx >= 0 ? allLines.slice(titleIdx + 1) : allLines).filter(
+      (l, i) => !(i === 0 && l.trim() === ""),
+    );
+    if (body.length === 0) {
+      lines.push("  no status available");
+    } else {
+      for (const l of body) lines.push(l.trim() === "" ? "" : `  ${l}`);
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    lines.push(`  unavailable (${detail})`);
+  }
+
   return `${lines.join("\n")}\n`;
 }
 

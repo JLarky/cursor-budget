@@ -21,3 +21,14 @@ test("codex-guard allows silently under a valid config", async () => {
   assert.equal(result.code, 0);
   assert.equal(result.stdout, "");
 });
+
+test("status covers all three agents", { timeout: 60_000 }, async () => {
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-cli3-"));
+  const result = await runCli(["status"], home);
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /Claude Code:/);
+  assert.match(result.stdout, /Codex:/);
+  assert.match(result.stdout, /Cursor Agent:/);
+  // Scoped escape hatches stay unambiguous.
+  assert.match(result.stdout, /\(claude\+codex\)/);
+});
