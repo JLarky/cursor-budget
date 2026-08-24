@@ -43,16 +43,22 @@ if [ -z "$NODE" ]; then
 fi
 SHIM_DIR=${JSON.stringify(shimDirValue)}
 SAVE_PATH="$PATH"
-# Remove SHIM_DIR as an exact PATH component (never substring-matching
-# similar dirs like "$SHIM_DIR-tools").
+# Remove SHIM_DIR as an exact PATH component. Iterate with \${var%%:*} /
+# \${var#*:} so empty components (POSIX "current directory") are preserved,
+# glob-like components are never expanded, and similar dirs such as
+# "$SHIM_DIR-tools" survive untouched.
 NEW_PATH=""
-OLDIFS="$IFS"
-IFS=":"
-for d in $SAVE_PATH; do
-  [ "$d" = "$SHIM_DIR" ] && continue
-  NEW_PATH="\${NEW_PATH:+\${NEW_PATH}:}\${d}"
+REST="$SAVE_PATH"
+while [ -n "$REST" ]; do
+  D="\${REST%%:*}"
+  case "$REST" in
+    *:*) REST="\${REST#*:}" ;;
+    *) REST="" ;;
+  esac
+  if [ "$D" != "$SHIM_DIR" ]; then
+    NEW_PATH="\${NEW_PATH:+\${NEW_PATH}:}\${D}"
+  fi
 done
-IFS="$OLDIFS"
 PATH="$NEW_PATH"
 REAL="$(command -v codex 2>/dev/null)"
 PATH="$SAVE_PATH"
