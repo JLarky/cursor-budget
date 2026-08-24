@@ -14,7 +14,8 @@
   ],
   "type": "module",
   "bin": {
-    "cursor-budget": "./dist/cli.js"
+    "cursor-budget": "./dist/cli.js",
+    "llm-budget": "./dist/llm/cli.js"
   },
   "scripts": {
     "build": "tsc",
