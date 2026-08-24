@@ -44,10 +44,11 @@ fi
 SHIM_DIR=${JSON.stringify(shimDirValue)}
 SAVE_PATH="$PATH"
 # Remove SHIM_DIR as an exact PATH component. Iterate with \${var%%:*} /
-# \${var#*:} so empty components (POSIX "current directory") are preserved,
-# glob-like components are never expanded, and similar dirs such as
-# "$SHIM_DIR-tools" survive untouched.
+# \${var#*:} so glob-like entries are never expanded, and track whether a
+# component has been emitted (\$SEEN) so leading/interior/trailing empty
+# components (POSIX "current directory") all survive intact.
 NEW_PATH=""
+SEEN=0
 REST="$SAVE_PATH"
 while [ -n "$REST" ]; do
   D="\${REST%%:*}"
@@ -56,16 +57,27 @@ while [ -n "$REST" ]; do
     *) REST="" ;;
   esac
   if [ "$D" != "$SHIM_DIR" ]; then
-    NEW_PATH="\${NEW_PATH:+\${NEW_PATH}:}\${D}"
+    if [ "$SEEN" -eq 0 ]; then
+      NEW_PATH="$D"
+      SEEN=1
+    else
+      NEW_PATH="\${NEW_PATH}:\${D}"
+    fi
   fi
 done
+# A trailing ":" (empty last component) never reaches the loop above.
+case "$SAVE_PATH" in
+  *:) NEW_PATH="\${NEW_PATH}:" ;;
+esac
 PATH="$NEW_PATH"
 REAL="$(command -v codex 2>/dev/null)"
-PATH="$SAVE_PATH"
 if [ -z "$REAL" ]; then
   echo "llm-budget: real codex binary not found on PATH (is the shim dir shadowing everything?)" >&2
   exit 1
 fi
+# Budget check runs with the real codex still resolvable but shadowed only by
+# us; we keep NEW_PATH so a nested codex call from inside the session cannot
+# loop back through this shim.
 if ! "$NODE" ${JSON.stringify(cli)} codex-guard; then
   # Guard already printed its block message (with escape hatches) on stderr.
   exit 2

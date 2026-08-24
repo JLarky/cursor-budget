@@ -22,43 +22,48 @@ test("install writes an executable shim that consults codex-guard first", () => 
   assert.match(contents, /exec "\$REAL" "\$@"/);
 });
 
-test("shim resolves the real binary even with hostile PATH entries", () => {
+test("shim rebuilds PATH exactly: filters only its own dir, keeps all empties", () => {
   const home = mkdtempSync(join(tmpdir(), "llm-budget-shim-e2e-"));
   installCodexShim(home);
-  // Sibling dir with the shim dir as a prefix, a glob-looking entry, and an
-  // empty component (POSIX current-dir) must all survive; only the exact
-  // shim dir is filtered out.
   const sibling = join(home, "sibling-bin-tools");
   mkdirSync(sibling, { recursive: true });
-  writeFileSync(join(sibling, "codex"), "#!/bin/bash\necho WRONG_CODEX\n");
-  chmodSync(join(sibling, "codex"), 0o755);
-
-  const fake = join(home, "fakebin");
-  mkdirSync(fake, { recursive: true });
-  writeFileSync(join(fake, "codex"), "#!/bin/bash\necho RIGHT_CODEX\n");
-  chmodSync(join(fake, "codex"), 0o755);
-
   const globDir = join(home, "glob*dir");
   mkdirSync(globDir, { recursive: true });
+  const fake = join(home, "fakebin");
+  mkdirSync(fake, { recursive: true });
+  // Echo the PATH this codex was exec'd with — proves what survived filtering.
+  writeFileSync(join(fake, "codex"), `#!/bin/bash\nprintf '%s' "$PATH"\n`);
+  chmodSync(join(fake, "codex"), 0o755);
 
   const shimPath = join(home, ".llm-budget", "bin", "codex");
-  const result = spawnSync(shimPath, ["exec", "--flag"], {
+  const nodeDir = join(process.execPath, "..");
+
+  // Interior empty + glob dir + sibling survive; shim dir filtered.
+  const interior = `${join(home, ".llm-budget", "bin")}:${fake}:${sibling}:${globDir}::${nodeDir}`;
+  const r1 = spawnSync(shimPath, ["exec"], {
     encoding: "utf8",
-    env: {
-      ...process.env,
-      HOME: home,
-      // Shim dir first (to be filtered), then the real codex, then hostile
-      // entries (must be preserved but never win), then node's dir so the
-      // wrapper can exec both.
-      PATH: `${join(home, ".llm-budget", "bin")}:${fake}:${sibling}:${globDir}::${join(
-        process.execPath,
-        "..",
-      )}:/usr/bin:/bin`,
-    },
+    env: { ...process.env, HOME: home, PATH: interior },
   });
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /RIGHT_CODEX/);
-  assert.doesNotMatch(result.stdout, /WRONG_CODEX/);
+  assert.equal(r1.status, 0, r1.stderr);
+  assert.equal(r1.stdout, `${fake}:${sibling}:${globDir}::${nodeDir}`);
+
+  // Leading empty survives.
+  const leading = `:${join(home, ".llm-budget", "bin")}:${fake}:${nodeDir}`;
+  const r2 = spawnSync(shimPath, ["exec"], {
+    encoding: "utf8",
+    env: { ...process.env, HOME: home, PATH: leading },
+  });
+  assert.equal(r2.status, 0, r2.stderr);
+  assert.equal(r2.stdout, `:${fake}:${nodeDir}`);
+
+  // Trailing empty survives.
+  const trailing = `${join(home, ".llm-budget", "bin")}:${fake}:${nodeDir}:`;
+  const r3 = spawnSync(shimPath, ["exec"], {
+    encoding: "utf8",
+    env: { ...process.env, HOME: home, PATH: trailing },
+  });
+  assert.equal(r3.status, 0, r3.stderr);
+  assert.equal(r3.stdout, `${fake}:${nodeDir}:`);
 });
 
 test("uninstall refuses to touch foreign files and keeps a disabled copy", () => {
