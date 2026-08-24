@@ -102,7 +102,14 @@ export function estimateCost(
 /**
  * Flatten a models.dev-style catalog (as cached by token-tracker's
  * pricing-cache.json or fetched from https://models.dev/api.json) into our
- * rate table, keyed `provider/model`.
+ * rate table.
+ *
+ * Transcript parsers store bare model ids (`claude-sonnet-5`,
+ * `gpt-5.6-codex`), so each entry is stored twice: as `provider/model` and as
+ * a bare `model` alias. When two providers ship the same model id, the
+ * alphabetically-first provider wins the bare alias — deterministic, and
+ * collisions are rare. Exact keys always beat aliases in the merge order
+ * because `loadRates` applies config overrides last.
  */
 export function catalogToRates(catalog: unknown): { table: RateTable; skipped: number } {
   const table: RateTable = {};
@@ -111,11 +118,12 @@ export function catalogToRates(catalog: unknown): { table: RateTable; skipped: n
     typeof catalog === "object" && catalog !== null
       ? (catalog as Record<string, Record<string, unknown>>)
       : {};
-  for (const [providerId, provider] of Object.entries(providers)) {
-    const models = provider?.models;
-    if (typeof models !== "object" || models === null) continue;
-    for (const [modelId, candidate] of Object.entries(models as Record<string, unknown>)) {
-      const cost = (candidate as Record<string, unknown>)?.cost;
+  for (const providerId of Object.keys(providers).sort()) {
+    const rawModels: unknown = providers[providerId]?.models;
+    if (typeof rawModels !== "object" || rawModels === null) continue;
+    const models = rawModels as Record<string, { cost?: unknown }>;
+    for (const modelId of Object.keys(models).sort()) {
+      const cost = models[modelId]?.cost;
       if (typeof cost !== "object" || cost === null) {
         skipped += 1;
         continue;
@@ -127,6 +135,7 @@ export function catalogToRates(catalog: unknown): { table: RateTable; skipped: n
         continue;
       }
       table[`${providerId}/${modelId}`] = rate;
+      if (!(modelId in table)) table[modelId] = rate;
     }
   }
   return { table, skipped };

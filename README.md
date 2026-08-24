@@ -1,17 +1,53 @@
-# cursor-budget
+# llm-budget
 
-A guard that stops Cursor Agent before you burn through your plan quota — using
-Cursor's own reported usage as the source of truth, not a local estimate.
+Usage guards for **Cursor Agent**, **Claude Code**, and **Codex** — each stops
+its agent before you burn through your quota, using real reported usage as the
+source of truth, never a local estimate.
 
-**Repository:** https://github.com/JLarky/cursor-budget
+One binary, one tool per agent:
 
-It installs as a set of [Cursor hooks](https://cursor.com/docs/agent/hooks). On
-every prompt and tool call it checks your real usage from the Cursor dashboard
-API, and denies the request once you cross a threshold you set.
+```sh
+llm-budget cursor status   # Cursor Agent  — dashboard API metering
+llm-budget claude install  # Claude Code   — transcript metering + native hooks
+llm-budget codex install   # Codex         — transcript metering + shim + watchdog
+```
+
+**Repository:** https://github.com/JLarky/llm-budget
+
+## Why not estimate tokens locally?
+
+An earlier version of this tool did, and it was wrong by roughly 12x. Hooks
+don't see the real prompt payload — system prompts, file context, cache reads
+and reasoning tokens are all invisible — so any local estimate is guessing at
+the majority of the bill. Every guard here reads numbers the provider actually
+billed: the Cursor dashboard API for `cursor`, and API-reported token usage
+stamped into local transcripts for `claude` and `codex`.
+
+## Install
+
+Requires Node >= 22.5 (for `node:sqlite`).
+
+```sh
+git clone https://github.com/JLarky/llm-budget.git
+cd llm-budget
+npm install
+npm run build
+
+llm-budget cursor install    # register Cursor hooks
+llm-budget claude install    # register Claude Code hooks
+llm-budget codex install     # write the Codex PATH shim (then add it to PATH)
+```
+
+### Cursor Agent scope
+
+`cursor install` writes a wrapper to `~/.cursor/hooks/llm-budget` and registers
+it in `~/.cursor/hooks.json`. On every prompt and tool call it checks real
+usage from the Cursor dashboard API and denies requests past your threshold.
+Undo with `llm-budget cursor uninstall`.
 
 ```
-$ cursor-budget status
-cursor-budget
+$ llm-budget cursor status
+llm-budget (cursor)
 
 Cursor Models (auto):
   1.38%  (block at 90%)
@@ -30,34 +66,12 @@ On unknown usage: block (failClosed)
 Override: none
 ```
 
-## Why not estimate tokens locally?
-
-An earlier version of this tool did, and it was wrong by roughly 12x. Hooks
-don't see the real prompt payload — system prompts, file context, cache reads
-and reasoning tokens are all invisible — so any local estimate is guessing at
-the majority of the bill. This reads the number Cursor bills you against.
-
-## Install
-
-Requires Node >= 22.5 (for `node:sqlite`).
-
-```sh
-git clone https://github.com/JLarky/cursor-budget.git
-cd cursor-budget
-npm install
-npm run build
-node dist/cli.js install
-```
-
-`install` writes a wrapper to `~/.cursor/hooks/cursor-budget` and registers it
-in `~/.cursor/hooks.json`. Undo with `cursor-budget uninstall`.
-
 Authentication piggybacks on the Cursor Agent CLI: sign in with `cursor-agent`
 and the guard reads `~/.config/cursor/auth.json`. You can override with
 `CURSOR_ACCESS_TOKEN`. The token is never logged, printed, or copied into the
 local database — only the usage snapshot is cached.
 
-## How it decides
+## How it decides (cursor)
 
 Two gates, in separate failure domains:
 
@@ -66,8 +80,8 @@ Two gates, in separate failure domains:
 | **Quota** | Cursor dashboard API | the real limit — blocks at `%` of your plan |
 | **Rate** | local SQLite event count | runaway-loop catch, `500` events/hour |
 
-An **override** (`cursor-budget override 30m`) or a per-session **exception**
-(`cursor-budget except add <session-id>`) bypasses both. Every block message
+An **override** (`llm-budget cursor override 30m`) or a per-session
+**exception** (`llm-budget cursor except add <session-id>`) bypasses both. Every block message
 prints the session id and those two commands, so you are never stuck without a
 way back in.
 
@@ -89,7 +103,7 @@ Note that Cursor's `hooks.json` has its own unrelated `failClosed` field, which
 governs what Cursor does when the hook *process* fails. `install` sets it to
 `false` so a crash in this tool cannot lock up your editor.
 
-## Configuration
+## Configuration (cursor)
 
 `~/.cursor/llm-budget/config.json`. Only overrides are stored; defaults live in
 code. All keys optional.
@@ -116,6 +130,9 @@ expired token means the guard starts blocking.
 
 ## Commands
 
+Cursor-scope commands (prefix everything with `llm-budget cursor`, or run
+`llm-budget cursor help`):
+
 | Command | |
 |---|---|
 | `status` | current usage, thresholds, override state, credential expiry |
@@ -126,11 +143,10 @@ expired token means the guard starts blocking.
 | `config` | print resolved configuration |
 | `install` / `uninstall [--purge-data]` | manage hook registration |
 
-## Claude Code & Codex (`llm-budget`)
+## Claude Code & Codex scopes
 
-The same guard philosophy extended to Claude Code CLI and Codex CLI, shipped as
-a second binary in this repo: `llm-budget`. Instead of polling a dashboard API,
-it meters what the CLIs themselves report — every assistant turn is stamped
+The same guard philosophy extended to Claude Code CLI and Codex CLI. Instead
+of polling a dashboard API, these scopes meter what the CLIs themselves report — every assistant turn is stamped
 with **API-reported token usage** in local JSONL transcripts, so the numbers
 are real, not estimates:
 
@@ -220,11 +236,14 @@ node dist/llm/cli.js watchdog           # sidecar poller (default: every 15s)
 
 - **Shim**: installed as a `codex` entrypoint; consults the guard, then execs
   the real binary. Gates *starting* Codex.
-- **Watchdog**: re-evaluates while sessions run and SIGTERMs codex processes
-  when the weekly cap trips. Kills are latched until usage recovers
-  (reset / override) so one trip doesn't become a kill loop.
+- **Watchdog**: re-evaluates every few seconds and SIGTERMs codex processes
+  on **every poll** while the weekly cap remains exceeded — so a process that
+  started later through an absolute path (bypassing the shim) or shrugged off
+  the first SIGTERM is still caught. The desktop notification fires only on
+  the trip transition, not each tick. Kills re-arm automatically when usage
+  recovers (reset / override).
 - Optional instead of the poller: register `notify` in `~/.codex/config.toml`
-  to run `llm-budget codex-guard --kill` after each turn.
+  to run `llm-budget codex-guard` after each turn.
 
 **Known gaps:** a single long-running turn can overshoot between watchdog
 ticks; anything that bypasses the shim (absolute paths, shell aliases made
@@ -246,9 +265,11 @@ guarantees, keep the percentage conservative.
 | `watchdog [--interval 15s] [--once]` | stop running Codex sessions on trip |
 | `config` | print resolved configuration |
 
-State lives in `~/.llm-budget/` (config, SQLite event store, rates). Override
-and exceptions are shared by the two new tools but separate from
-`cursor-budget`, whose strict config schema should not learn about agent keys.
+State lives in `~/.llm-budget/` (config, SQLite event store, rates) for the
+claude and codex scopes; the cursor scope keeps its own state in
+`~/.cursor/llm-budget/`. Override and exceptions are scoped per store —
+`llm-budget override` unblocks claude+codex, `llm-budget cursor override`
+unblocks Cursor — so unblocking one tool never silently unblocks another.
 
 ## Development
 

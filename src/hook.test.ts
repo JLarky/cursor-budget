@@ -199,7 +199,7 @@ test("§5 CursorUsageUnavailableError blocks by default, allows when failClosed 
   assert.match(String(closed.user_message), /could not be determined/);
   assert.match(String(closed.user_message), /no cache/);
   // Recovery must be reachable from the block message itself.
-  assert.match(String(closed.user_message), /cursor-budget override 30m/);
+  assert.match(String(closed.user_message), /llm-budget cursor override 30m/);
   assert.match(String(closed.user_message), /except add sess-unavail/);
 
   config.enforcement.failClosed = false;

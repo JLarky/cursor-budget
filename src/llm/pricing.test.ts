@@ -45,7 +45,7 @@ test("estimateCost prices each token bucket; missing models are flagged", () => 
   assert.equal(unknown.usd, 0);
 });
 
-test("catalogToRates flattens a models.dev-style catalog", () => {
+test("catalogToRates flattens a models.dev-style catalog with bare-id aliases", () => {
   const catalog = {
     anthropic: {
       models: {
@@ -56,6 +56,7 @@ test("catalogToRates flattens a models.dev-style catalog", () => {
     openai: {
       models: {
         "gpt-y": { cost: { input: 1.25, output: 10 } },
+        "claude-x": { cost: { input: 9, output: 9 } }, // cross-provider dup
       },
     },
   };
@@ -63,4 +64,7 @@ test("catalogToRates flattens a models.dev-style catalog", () => {
   assert.equal(skipped, 1);
   assert.deepEqual(table["anthropic/claude-x"], { input: 3, output: 15, cacheRead: 0.3 });
   assert.deepEqual(table["openai/gpt-y"], { input: 1.25, output: 10 });
+  // Bare aliases match transcript model names.
+  assert.deepEqual(table["claude-x"], table["anthropic/claude-x"]);
+  assert.deepEqual(table["gpt-y"], table["openai/gpt-y"]);
 });

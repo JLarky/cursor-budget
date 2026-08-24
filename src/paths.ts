@@ -23,5 +23,5 @@ export function hooksJsonPath(home = homedir()): string {
 }
 
 export function hookWrapperPath(home = homedir()): string {
-  return join(home, ".cursor", "hooks", "cursor-budget");
+  return join(home, ".cursor", "hooks", "llm-budget");
 }

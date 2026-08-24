@@ -166,7 +166,7 @@ export function formatBlockMessage(
 ): string {
   const id = sessionId?.trim() || "unknown";
   const primary = evaluation.reasons[0];
-  const lines = ["Cursor Agent blocked by cursor-budget.", "", `Session id: ${id}`, ""];
+  const lines = ["Cursor Agent blocked by llm-budget.", "", `Session id: ${id}`, ""];
 
   if (primary) {
     if (primary.metric === "usageUnknown") {
@@ -220,9 +220,9 @@ export function formatBlockMessage(
   );
   lines.push("");
   lines.push("Run:");
-  lines.push("  cursor-budget status");
-  lines.push("  cursor-budget override 30m");
-  lines.push(`  cursor-budget except add ${id}`);
+  lines.push("  llm-budget cursor status");
+  lines.push("  llm-budget cursor override 30m");
+  lines.push(`  llm-budget cursor except add ${id}`);
   return lines.join("\n");
 }
 

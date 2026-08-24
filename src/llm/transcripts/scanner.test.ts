@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -100,4 +100,24 @@ test("malformed lines are counted, not fatal", () => {
 test("pathHash is stable for identical paths", () => {
   assert.equal(pathHash("/a/b.jsonl"), pathHash("/a/b.jsonl"));
   assert.notEqual(pathHash("/a/b.jsonl"), pathHash("/a/c.jsonl"));
+});
+
+test("unreadable roots are reported, missing roots stay silent", () => {
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-test-"));
+  const locked = join(home, "locked-root");
+  mkdirSync(locked, { recursive: true });
+  writeFileSync(join(locked, "x.jsonl"), "{}\n");
+  chmodSync(locked, 0o000);
+  try {
+    const stats = collectAgentUsage("claude", {
+      home,
+      // Second root does not exist at all: a normal fresh install.
+      roots: [locked, join(home, "missing-root")],
+    });
+    assert.ok(stats.unreadableRoots && stats.unreadableRoots.length === 1);
+    assert.match(stats.unreadableRoots![0]!, /locked-root/);
+    assert.equal(stats.totalFiles, 0);
+  } finally {
+    chmodSync(locked, 0o755);
+  }
 });

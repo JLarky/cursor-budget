@@ -53,7 +53,7 @@ if [ -z "$NODE" ]; then
   echo "llm-budget: node not found; cannot check budget" >&2
   exit 2
 fi
-exec "$NODE" ${JSON.stringify(cli)} claude-hook
+exec "$NODE" ${JSON.stringify(cli)} claude hook
 `,
   );
   chmodSync(wrapper, 0o755);

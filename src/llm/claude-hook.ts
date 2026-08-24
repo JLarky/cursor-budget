@@ -102,6 +102,31 @@ export function handleClaudeHook(
 
 const STDIN_TIMEOUT_MS = 2_000;
 
+export class ClaudeHookInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ClaudeHookInputError";
+  }
+}
+
+/**
+ * Parse one hook payload. Claude Code always pipes JSON, so empty or
+ * unparseable input means something upstream is broken (truncated pipe,
+ * hijacked stdin) — callers must fail closed rather than read it as
+ * "no event".
+ */
+export function parseClaudeHookInput(raw: string): ClaudeHookEvent {
+  if (!raw.trim()) {
+    throw new ClaudeHookInputError("hook produced no input on stdin");
+  }
+  try {
+    return JSON.parse(raw) as ClaudeHookEvent;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new ClaudeHookInputError(`hook input is not valid JSON: ${detail}`);
+  }
+}
+
 /** Read one hook event from stdin (Claude Code pipes JSON per event). */
 export async function readClaudeHookEvent(
   timeoutMs = STDIN_TIMEOUT_MS,
@@ -140,14 +165,7 @@ export async function readClaudeHookEvent(
 
     if (process.stdin.readableEnded) finish(data);
   });
-  if (!raw.trim()) return {};
-  try {
-    return JSON.parse(raw) as ClaudeHookEvent;
-  } catch {
-    // Unparseable stdin is not a reason to fail open silently — but the hook
-    // protocol gives us nothing to attribute it to either. Treat as unknown
-    // event; handleClaudeHook allows non-enforce events and PreToolUse/
-    // UserPromptSubmit without ids still get gated by session-less checks.
-    return {};
-  }
+  // Empty/unparseable input throws so the CLI can block explicitly instead
+  // of silently treating it as a non-enforcement event.
+  return parseClaudeHookInput(raw);
 }

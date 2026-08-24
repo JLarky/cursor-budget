@@ -3,14 +3,22 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { windowUsage, denominatorDisplay, formatNumber, formatUsd, usedPctOf } from "./accounting.js";
-import { formatBudgetBlockMessage, formatPercent } from "./budget/evaluator.js";
+import {
+  formatBudgetBlockMessage,
+  formatPercent,
+} from "./budget/evaluator.js";
 import {
   nextUtcWeekStart,
   parseDuration,
   rollingWindowStart,
   utcWeekStart,
 } from "./budget/windows.js";
-import { handleClaudeHook, readClaudeHookEvent, type ClaudeHookEvent } from "./claude-hook.js";
+import {
+  ClaudeHookInputError,
+  handleClaudeHook,
+  readClaudeHookEvent,
+  type ClaudeHookEvent,
+} from "./claude-hook.js";
 import { installClaudeHooks, uninstallClaudeHooks } from "./claude-install.js";
 import {
   ensureLlmConfig,
@@ -22,33 +30,52 @@ import { runWatchdog } from "./codex-watchdog.js";
 import { getState, openLlmDb, setState } from "./db.js";
 import { runGuard } from "./guard.js";
 import { catalogToRates, loadRates, writeRatesFile } from "./pricing.js";
-import { collectAgentUsage } from "./transcripts/scanner.js";
+// Cursor scope: reuse the original modules unchanged.
+import { exceptCommand as cursorExceptCommand } from "../commands/except.js";
+import { historyCommand as cursorHistoryCommand } from "../commands/history.js";
+import { installCommand as cursorInstallCommand } from "../commands/install.js";
+import { overrideCommand as cursorOverrideCommand } from "../commands/override.js";
+import { statusCommand as cursorStatusCommand } from "../commands/status.js";
+import { uninstallCommand as cursorUninstallCommand } from "../commands/uninstall.js";
+import { configCommand as cursorConfigCommand } from "../commands/config.js";
+import { spendingCommand as cursorSpendingCommand } from "../commands/spending.js";
+import { handleHook, readStdinJson } from "../hook.js";
 
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
   switch (command) {
-    case "claude-hook": {
-      const event = await readClaudeHookEvent();
-      const response = handleClaudeHook(event as ClaudeHookEvent);
-      if (response.block && response.message) {
-        process.stderr.write(`${response.message}\n`);
-        // Machine-readable decision for modern clients; exit code 2 is the
-        // portable blocking error across Claude Code hook types.
-        writeBlockJson(response.eventName, response.message);
-        process.exit(2);
-      }
+    case "cursor":
+      await cursorScope(rest);
       return;
+    case "claude": {
+      const sub = rest[0];
+      if (sub === "install") {
+        process.stdout.write(`${installClaudeHooks()}\n`);
+        return;
+      }
+      if (sub === "uninstall") {
+        process.stdout.write(uninstallClaudeHooks());
+        return;
+      }
+      if (sub === "hook") {
+        // Internal: registered by `claude install`.
+        const event = await readClaudeHookEvent();
+        respondToClaudeHook(event);
+        return;
+      }
+      throw new Error("Usage: llm-budget claude install | claude uninstall");
     }
-    case "codex-guard": {
-      const config = loadLlmConfigForRead().config;
-      const decision = runGuard("codex", config);
-      if (!decision.allow) {
-        process.stderr.write(
-          `${formatBudgetBlockMessage(decision.evaluation, "codex", decision.sessionId)}\n`,
-        );
-        process.exit(2);
+    case "codex": {
+      const sub = rest[0];
+      if (sub === "install") {
+        process.stdout.write(`${installCodexShim()}\n`);
+        return;
       }
-      return;
+      if (sub === "uninstall") {
+        process.stdout.write(uninstallCodexShim());
+        return;
+      }
+      throw new Error("Usage: llm-budget codex install | codex uninstall");
     }
     case "watchdog": {
       const once = rest.includes("--once");
@@ -56,6 +83,19 @@ async function main(): Promise<void> {
       const intervalMs =
         intervalFlag >= 0 ? (parseDuration(rest[intervalFlag + 1] ?? "") ?? undefined) : undefined;
       await runWatchdog({ once, intervalMs });
+      return;
+    }
+    case "codex-guard": {
+      // Strict config on purpose: an unreadable config must fail closed here,
+      // so use ensureLlmConfig and let the top-level handler exit non-zero.
+      const config = ensureLlmConfig();
+      const decision = runGuard("codex", config);
+      if (!decision.allow) {
+        process.stderr.write(
+          `${formatBudgetBlockMessage(decision.evaluation, "codex", decision.sessionId)}\n`,
+        );
+        process.exit(2);
+      }
       return;
     }
     case "status":
@@ -82,30 +122,6 @@ async function main(): Promise<void> {
       process.stdout.write(importRatesCommand(src));
       return;
     }
-    case "claude": {
-      const sub = rest[0];
-      if (sub === "install") {
-        process.stdout.write(`${installClaudeHooks()}\n`);
-        return;
-      }
-      if (sub === "uninstall") {
-        process.stdout.write(uninstallClaudeHooks());
-        return;
-      }
-      throw new Error("Usage: llm-budget claude install | claude uninstall");
-    }
-    case "codex": {
-      const sub = rest[0];
-      if (sub === "install") {
-        process.stdout.write(`${installCodexShim()}\n`);
-        return;
-      }
-      if (sub === "uninstall") {
-        process.stdout.write(uninstallCodexShim());
-        return;
-      }
-      throw new Error("Usage: llm-budget codex install | codex uninstall");
-    }
     case "-h":
     case "--help":
     case "help":
@@ -117,11 +133,79 @@ async function main(): Promise<void> {
   }
 }
 
+/** `llm-budget cursor ...` — the original Cursor Agent guard. */
+async function cursorScope(args: string[]): Promise<void> {
+  const [sub, ...rest] = args;
+  switch (sub) {
+    case "hook": {
+      const event = await readStdinJson();
+      const response = await handleHook(event);
+      process.stdout.write(JSON.stringify(response));
+      process.exitCode = 0;
+      return;
+    }
+    case "status":
+      process.stdout.write(`${await cursorStatusCommand()}\n`);
+      return;
+    case "spending":
+    case "usage-api":
+      process.stdout.write(await cursorSpendingCommand());
+      return;
+    case "config":
+      process.stdout.write(cursorConfigCommand());
+      return;
+    case "override":
+      process.stdout.write(cursorOverrideCommand(rest[0]));
+      return;
+    case "history":
+      process.stdout.write(cursorHistoryCommand());
+      return;
+    case "except":
+    case "exclude":
+      process.stdout.write(cursorExceptCommand(rest));
+      return;
+    case "install":
+      process.stdout.write(cursorInstallCommand());
+      return;
+    case "uninstall":
+      process.stdout.write(cursorUninstallCommand(rest.includes("--purge-data")));
+      return;
+    case undefined:
+    case "-h":
+    case "--help":
+    case "help":
+      process.stdout.write(CURSOR_HELP);
+      return;
+    default:
+      throw new Error(`Unknown cursor command: ${sub}`);
+  }
+}
+
+function respondToClaudeHook(event: ClaudeHookEvent): void {
+  let response;
+  try {
+    response = handleClaudeHook(event);
+  } catch (error) {
+    blockClaudeHook(
+      "UserPromptSubmit",
+      `llm-budget failed while checking budget:\n  ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return;
+  }
+  if (response.block && response.message) {
+    blockClaudeHook(response.eventName, response.message);
+    return;
+  }
+  // Allow: silent success.
+}
+
 /**
- * Best-effort JSON block decision for Claude Code versions that honor stdout
- * JSON over exit codes. Written only on the block path.
+ * Block path for Claude Code hooks: human message on stderr (fed back by every
+ * hook type), machine-readable JSON on stdout for modern clients, exit code 2
+ * (the portable blocking error).
  */
-function writeBlockJson(eventName: string, message: string): void {
+function blockClaudeHook(eventName: string, message: string): void {
+  process.stderr.write(`${message}\n`);
   const payload: Record<string, unknown> =
     eventName === "PreToolUse"
       ? {
@@ -139,12 +223,32 @@ function writeBlockJson(eventName: string, message: string): void {
   } catch {
     // stderr already carries the human-readable block; nothing else to do.
   }
+  process.exit(2);
 }
 
-const HELP = `llm-budget — Claude Code + Codex usage guard
+const CURSOR_HELP = `llm-budget cursor — Cursor Agent usage guard
 
 Usage:
-  llm-budget status
+  llm-budget cursor status
+  llm-budget cursor spending
+  llm-budget cursor config
+  llm-budget cursor override 15m|30m|1h|off
+  llm-budget cursor except add <session-id>
+  llm-budget cursor except remove <session-id>
+  llm-budget cursor except list
+  llm-budget cursor history
+  llm-budget cursor install
+  llm-budget cursor uninstall [--purge-data]
+  llm-budget cursor hook            # used by the installed hooks
+
+Primary gate uses Cursor dashboard period usage (Cursor Models / Other Models).
+Backstop is a local rolling-hour event count.
+`;
+
+const HELP = `llm-budget — usage guards for Cursor Agent, Claude Code, and Codex
+
+Usage:
+  llm-budget status                     # Claude Code + Codex windows
   llm-budget override 15m|30m|1h|off
   llm-budget except add <session-id>
   llm-budget except remove <session-id>
@@ -155,8 +259,12 @@ Usage:
   llm-budget claude install | claude uninstall
   llm-budget codex install | codex uninstall
   llm-budget watchdog [--interval 15s] [--once]
-  llm-budget codex-guard     # used by the installed shim
-  llm-budget claude-hook     # used by the installed hooks
+  llm-budget cursor <command>           # Cursor Agent guard (see: cursor help)
+
+Scopes:
+  claude  install/uninstall native Claude Code hooks (UserPromptSubmit, PreToolUse)
+  codex   install/uninstall the PATH shim; pair with watchdog
+  cursor  the original dashboard-API guard for Cursor Agent
 
 Weekly caps use a pinned UTC week (Monday 00:00). Percentages are against the
 budget denominator configured in ~/.llm-budget/config.json.
@@ -182,8 +290,10 @@ function statusCommand(home = homedir()): string {
 
     // Refresh from transcripts before displaying (same scan the guard runs).
     try {
-      const stats = collectAgentUsage(agent, { home });
-      if (stats.failedFiles > 0) {
+      const stats = collectAgentUsageStats(agent, home);
+      if (stats.unreadableRoots && stats.unreadableRoots.length > 0) {
+        lines.push(`  Warning: unreadable transcript dirs — ${stats.unreadableRoots.join("; ")}`);
+      } else if (stats.failedFiles > 0) {
         lines.push(`  Warning: ${stats.failedFiles} transcript file(s) failed to read`);
       }
     } catch {
@@ -234,6 +344,12 @@ function statusCommand(home = homedir()): string {
   );
   lines.push("On unknown usage: block (failClosed)");
   return `${lines.join("\n")}\n`;
+}
+
+import { collectAgentUsage } from "./transcripts/scanner.js";
+
+function collectAgentUsageStats(agent: "claude" | "codex", home?: string) {
+  return collectAgentUsage(agent, { home });
 }
 
 function usageLine(
@@ -344,15 +460,32 @@ function importRatesCommand(src: string, home = homedir()): string {
 
 main().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
-  if (process.argv[2] === "claude-hook") {
-    // Expected failures are handled inside handleClaudeHook and deny there;
-    // a crash this deep still fails closed with an explanation.
-    process.stderr.write(`llm-budget: unexpected hook failure: ${message}\n`);
-    process.exit(2);
+  const argv = process.argv.slice(2);
+  if (argv[0] === "claude" && argv[1] === "hook") {
+    // Unreadable stdin / unexpected crash must fail closed: Claude Code always
+    // sends JSON, so silence or garbage means something upstream is broken.
+    const detail =
+      error instanceof ClaudeHookInputError
+        ? message
+        : `unexpected hook failure: ${message}`;
+    blockClaudeHook(
+      "UserPromptSubmit",
+      [
+        "llm-budget could not verify your budget:",
+        `  ${detail}`,
+        "",
+        "Blocked because enforcement.failClosed is on (the default).",
+        "",
+        "Recover with:",
+        "  llm-budget override 30m",
+        "  llm-budget status",
+      ].join("\n"),
+    );
+    return;
   }
-  if (process.argv[2] === "codex-guard") {
+  if (argv[0] === "codex-guard" || argv[0] === "watchdog") {
     // The shim treats any non-zero exit as blocked: failing closed.
-    process.stderr.write(`llm-budget codex-guard failed: ${message}\n`);
+    process.stderr.write(`llm-budget ${argv[0]} failed: ${message}\n`);
     process.exit(2);
   }
   process.stderr.write(`${message}\n`);

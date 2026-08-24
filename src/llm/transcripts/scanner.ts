@@ -30,6 +30,12 @@ export interface ScanStats {
   malformedLines: number;
   addedEvents: number;
   updatedEvents: number;
+  /**
+   * Transcript roots that exist but could not be read (permissions, I/O).
+   * A missing root is a normal fresh install; an unreadable one means we
+   * cannot see usage that may be there, so callers must treat it as unknown.
+   */
+  unreadableRoots?: string[];
 }
 
 export interface ParsedFile {
@@ -54,13 +60,20 @@ export function pathHash(path: string): string {
   return sha256Hex([path]);
 }
 
-function listJsonlFiles(roots: string[]): string[] {
+function listJsonlFiles(roots: string[]): { files: string[]; unreadableRoots: string[] } {
   const files: string[] = [];
+  const unreadableRoots: string[] = [];
   for (const root of roots) {
-    let entries: string[] = [];
+    let entries: string[];
     try {
       entries = readdirSync(root, { recursive: true }) as string[];
-    } catch {
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException | null)?.code;
+      // A missing root just means the tool has never run here.
+      if (code !== "ENOENT") {
+        const detail = error instanceof Error ? error.message : String(error);
+        unreadableRoots.push(`${root}: ${detail}`);
+      }
       continue;
     }
     for (const entry of entries) {
@@ -68,7 +81,7 @@ function listJsonlFiles(roots: string[]): string[] {
       files.push(join(root, entry));
     }
   }
-  return [...new Set(files)].sort();
+  return { files: [...new Set(files)].sort(), unreadableRoots };
 }
 
 /**
@@ -101,8 +114,9 @@ export function collectAgentUsage(agent: AgentKind, options: CollectOptions = {}
     updatedEvents: 0,
   };
 
-  const files = listJsonlFiles(roots);
+  const { files, unreadableRoots } = listJsonlFiles(roots);
   stats.totalFiles = files.length;
+  if (unreadableRoots.length > 0) stats.unreadableRoots = unreadableRoots;
 
   for (const file of files) {
     let beforeStat: { size: number; mtimeMs: number };

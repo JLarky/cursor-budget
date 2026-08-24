@@ -66,6 +66,20 @@ export function runGuard(
   deps: GuardDeps = {},
 ): GuardDecision {
   const now = deps.now ?? new Date();
+
+  // Disabled agents short-circuit before any storage, transcript, or pricing
+  // work: opting out of a tool's guard must not be able to block it either.
+  const enabled = agent === "claude" ? config.claudeCode.enabled : config.codex.enabled;
+  if (!enabled) {
+    return {
+      allow: true,
+      evaluation: { allow: true, reasons: [], overrideActive: false, excluded: false },
+      config,
+      stats: { ...ZERO_STATS },
+      sessionId: deps.sessionId ?? "",
+    };
+  }
+
   const db = openLlmDb(deps.home);
   const rates = loadRates(config.budget.rates, deps.home);
 
@@ -89,6 +103,8 @@ export function runGuard(
   if (scanFailed) {
     usageUnknownReason =
       "local transcript database could not be read or updated (run llm-budget status)";
+  } else if (stats.unreadableRoots && stats.unreadableRoots.length > 0) {
+    usageUnknownReason = `transcript directories unreadable: ${stats.unreadableRoots.join("; ")}`;
   } else if (
     stats.totalFiles > 0 &&
     stats.scannedFiles === 0 &&
@@ -96,11 +112,13 @@ export function runGuard(
   ) {
     usageUnknownReason = `all ${stats.totalFiles} transcript files failed to read`;
   }
-
-  const enabled = agent === "claude" ? config.claudeCode.enabled : config.codex.enabled;
-  const windowMeasurements = enabled
-    ? buildMeasurements(agent, config, db, rates.rates.size > 0 ? rates : null, now)
-    : [];
+  const windowMeasurements = buildMeasurements(
+    agent,
+    config,
+    db,
+    rates.rates.size > 0 ? rates : null,
+    now,
+  );
 
   const evaluation = evaluateBudget({
     measurements: windowMeasurements,

@@ -25,7 +25,7 @@ function isCursorBudgetEntry(entry: unknown): boolean {
     typeof entry === "object" &&
     entry !== null &&
     "command" in entry &&
-    String((entry as { command: string }).command).includes("cursor-budget")
+    String((entry as { command: string }).command).includes("llm-budget")
   );
 }
 
@@ -79,7 +79,7 @@ exec "$NODE" ${JSON.stringify(cli)} hook "$@"
     const already = list.some(isCursorBudgetEntry);
     if (!already) {
       list.push({
-        command: "./hooks/cursor-budget",
+        command: "./hooks/llm-budget",
         failClosed: false,
       });
     }
@@ -87,5 +87,5 @@ exec "$NODE" ${JSON.stringify(cli)} hook "$@"
   }
 
   writeFileSync(hooksPath, `${JSON.stringify(hooks, null, 2)}\n`);
-  return `Installed cursor-budget hooks (failClosed: false)\n  ${hooksPath}\n  ${wrapper}\n`;
+  return `Installed llm-budget Cursor Agent hooks (failClosed: false)\n  ${hooksPath}\n  ${wrapper}\n`;
 }

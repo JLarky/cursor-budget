@@ -193,7 +193,7 @@ test("block message explains why usage is unknown", () => {
   assert.match(message, /could not be determined/);
   assert.match(message, /3\.0h old/);
   assert.match(message, /failClosed/);
-  assert.match(message, /cursor-budget override 30m/);
+  assert.match(message, /llm-budget cursor override 30m/);
 });
 
 test("event-count backstop: under threshold allows", () => {
@@ -272,7 +272,7 @@ test("block message includes session id and real spend", () => {
     "21623392-2ebe-4a2a-b906-e012529de912",
   );
   assert.match(message, /Session id: 21623392-2ebe-4a2a-b906-e012529de912/);
-  assert.match(message, /cursor-budget except add 21623392-2ebe-4a2a-b906-e012529de912/);
+  assert.match(message, /llm-budget cursor except add 21623392-2ebe-4a2a-b906-e012529de912/);
   assert.match(message, /\$25\.96 \/ \$400\.00/);
   assert.doesNotMatch(message, /estimated/i);
 });

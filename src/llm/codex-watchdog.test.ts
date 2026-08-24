@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -19,10 +19,12 @@ function okConfig(): LlmConfig {
   return config;
 }
 
-test("watchdog kills codex processes once per trip and latches until recovery", async () => {
+test("watchdog kills codex processes on every tripped pass, notifies once", async () => {
   const home = mkdtempSync(join(tmpdir(), "llm-budget-wd-"));
   let decideBlock = true;
   const killed: number[] = [];
+  const notified: string[] = [];
+  const logs: string[] = [];
   // Mimics defaultListCodexProcesses output: codex binaries only (vim etc.
   // are filtered by the ps parser), and never our own CLI process line.
   const processes = [
@@ -43,70 +45,68 @@ test("watchdog kills codex processes once per trip and latches until recovery", 
     config: decideBlock ? blockedConfig() : okConfig(),
   });
 
+  const runPass = () =>
+    runWatchdog({
+      home,
+      once: true,
+      decide,
+      listCodexProcesses: () => processes,
+      kill: (pid) => {
+        killed.push(pid);
+        return true;
+      },
+      sleep: async () => {},
+      log: (line) => logs.push(line),
+      notifyFn: (title, body) => notified.push(`${title}: ${body}`),
+    });
+
   // First pass: budget tripped → kill matching pids (never our own pid).
-  const first = await runWatchdog({
-    home,
-    once: true,
-    decide,
-    listCodexProcesses: () => processes,
-    kill: (pid) => {
-      killed.push(pid);
-      return true;
-    },
-    sleep: async () => {},
-    log: () => {},
-  });
+  const first = await runPass();
   assert.equal(first?.blocked, true);
   assert.deepEqual(first?.killedPids.sort(), [101, 102]);
-  assert.deepEqual(killed.sort(), [101, 102]);
+  assert.equal(notified.length, 1);
 
-  // Latch set: a second tripped pass must NOT kill again.
-  const second = await runWatchdog({
-    home,
-    once: true,
-    decide,
-    listCodexProcesses: () => processes,
-    kill: (pid) => {
-      killed.push(pid);
-      return true;
-    },
-    sleep: async () => {},
-    log: () => {},
-  });
+  // Latch is set, but enforcement continues: a codex process that appeared
+  // later (or survived the first SIGTERM) is killed again on this pass.
+  processes.push({ pid: 104, command: "/opt/bin/codex" });
+  const second = await runPass();
   assert.equal(second?.blocked, true);
-  assert.equal(second?.killedPids.length, 0);
-  assert.equal(killed.length, 2);
+  assert.deepEqual(second?.killedPids.sort(), [101, 102, 104]);
+  // Notification fires only on the transition, not every poll.
+  assert.equal(notified.length, 1);
 
   // Budget recovers (override/reset) → latch clears, re-armed.
   decideBlock = false;
-  const third = await runWatchdog({
-    home,
-    once: true,
-    decide,
-    listCodexProcesses: () => processes,
-    kill: (pid) => {
-      killed.push(pid);
-      return true;
-    },
-    sleep: async () => {},
-    log: () => {},
-  });
+  const third = await runPass();
   assert.equal(third?.blocked, false);
   assert.equal(getState(openLlmDb(home), "codex_watchdog_trip"), "");
 
-  // Trips again after recovery → kills again.
+  // Trips again after recovery → notifies once more.
   decideBlock = true;
-  const fourth = await runWatchdog({
+  const fourth = await runPass();
+  assert.equal(fourth?.killedPids.length, 3);
+  assert.equal(notified.length, 2);
+});
+
+test("watchdog fails closed when config is unreadable", async () => {
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-wd-badcfg-"));
+  mkdirSync(join(home, ".llm-budget"), { recursive: true });
+  writeFileSync(join(home, ".llm-budget", "config.json"), "{ not json");
+  const killed: number[] = [];
+  const notified: string[] = [];
+
+  const result = await runWatchdog({
     home,
     once: true,
-    decide,
-    listCodexProcesses: () => processes,
+    listCodexProcesses: () => [{ pid: 201, command: "codex" }],
     kill: (pid) => {
       killed.push(pid);
       return true;
     },
     sleep: async () => {},
-    log: () => {},
+    notifyFn: (_t, b) => notified.push(b),
   });
-  assert.equal(fourth?.killedPids.length, 2);
+  assert.equal(result?.blocked, true);
+  assert.deepEqual(result?.killedPids, [201]);
+  assert.match(notified[0] ?? "", /fail-closed|config unreadable/i);
 });

@@ -1,6 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { homedir } from "node:os";
-import { ensureLlmConfig, type LlmConfig } from "./config.js";
+import { ensureLlmConfig, loadLlmConfigForRead, type LlmConfig } from "./config.js";
 import { getState, openLlmDb, setState } from "./db.js";
 import { runGuard, formatGuardDeny } from "./guard.js";
 import { notify } from "../notify.js";
@@ -22,6 +21,8 @@ export interface WatchdogDeps {
   kill?: (pid: number) => boolean;
   sleep?: (ms: number) => Promise<void>;
   log?: (line: string) => void;
+  /** Injectable desktop notification (tests). */
+  notifyFn?: (title: string, body: string) => void;
 }
 
 export interface WatchdogPassResult {
@@ -30,56 +31,77 @@ export interface WatchdogPassResult {
 }
 
 /**
- * Sidecar poller that stops an already-running Codex session once the weekly
+ * Sidecar poller that stops already-running Codex sessions once the weekly
  * budget trips.
  *
  * The shim only gates *starting* Codex — it cannot reach inside a running
- * turn. This loop re-evaluates every few seconds and SIGTERMs codex
- * processes when the budget trips. Kills are latched per UTC week so one trip
- * doesn't become a kill loop; the latch clears when usage drops back under
- * the threshold (override/exception/reset).
+ * turn. This loop re-evaluates every few seconds and SIGTERMs codex processes
+ * every poll while the budget remains exceeded, so a process that started
+ * later through an absolute path (bypassing the shim) or shrugged off the
+ * first SIGTERM is still caught. The trip latch only gates the desktop
+ * notification/log transition so one trip doesn't spam; it clears when usage
+ * drops back under the threshold (override/exception/reset).
  */
 export async function runWatchdog(deps: WatchdogDeps = {}): Promise<WatchdogPassResult | null> {
   const home = deps.home;
-  const config = ensureLlmConfig(home);
   const intervalMs = deps.intervalMs ?? 15_000;
-  const log = deps.log ?? (() => {});
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
   for (;;) {
-    const pass = await watchdogPass({ ...deps, home, config });
-    if (pass.blocked && pass.killedPids.length > 0) {
-      notify(
-        "llm-budget",
-        "Codex weekly budget tripped — running Codex sessions were stopped. Run llm-budget status.",
-      );
-    }
+    const pass = await watchdogPass({ ...deps, home });
     if (deps.once) return pass;
     await sleep(intervalMs);
   }
 }
 
-async function watchdogPass(deps: WatchdogDeps & { config: LlmConfig }): Promise<WatchdogPassResult> {
-  const { home, config } = deps;
+async function watchdogPass(
+  deps: WatchdogDeps & { home?: string },
+): Promise<WatchdogPassResult & { notified: boolean }> {
+  const { home } = deps;
   const now = deps.now ?? new Date();
   const db = openLlmDb(home);
+  const log = deps.log ?? (() => {});
+  const notifyFn = deps.notifyFn ?? notify;
 
-  const decide =
-    deps.decide ??
-    (() => {
-      const decision = runGuard("codex", config, { home, now });
-      return decision;
-    });
-
-  const decision = decide();
+  // Config must be strict here: an unreadable config is exactly when a guard
+  // must not silently stop guarding. Under failClosed that means treat every
+  // codex process as over-budget; with failClosed off, sit this pass out.
+  let decision: Pick<GuardDecision, "allow" | "evaluation" | "sessionId"> & {
+    config: LlmConfig;
+  };
+  try {
+    decision = deps.decide
+      ? deps.decide()
+      : runGuard("codex", ensureLlmConfig(home), { home, now });
+  } catch (error) {
+    const lenient = loadLlmConfigForRead(home).config.enforcement.failClosed === false;
+    if (!lenient) {
+      const targets = (deps.listCodexProcesses ?? defaultListCodexProcesses)().filter(
+        ({ pid }) => pid !== process.pid,
+      );
+      const kill = deps.kill ?? defaultKill;
+      const killedPids: number[] = [];
+      for (const target of targets) {
+        if (kill(target.pid)) killedPids.push(target.pid);
+      }
+      const detail = error instanceof Error ? error.message : String(error);
+      process.stderr.write(
+        `llm-budget failed closed: config unreadable, stopping Codex sessions.\n  ${detail}\n`,
+      );
+      notifyFn("llm-budget", "llm-budget config unreadable — Codex sessions stopped (fail-closed).");
+      log(`config error; killed ${killedPids.length} codex process(es)`);
+      return { blocked: true, killedPids, notified: true };
+    }
+    log("config unreadable; failClosed is off — skipping this pass");
+    return { blocked: false, killedPids: [], notified: false };
+  }
 
   if (!decision.allow) {
-    const latch = getState(db, "codex_watchdog_trip");
-    if (latch === "active") {
-      return { blocked: true, killedPids: [] };
-    }
+    const firstTrip = getState(db, "codex_watchdog_trip") !== "active";
     setState(db, "codex_watchdog_trip", "active");
 
+    // Kill on EVERY tripped pass: new codex processes can appear mid-trip
+    // (shim bypass) and survivors of a previous SIGTERM may still be alive.
     const targets = (deps.listCodexProcesses ?? defaultListCodexProcesses)().filter(
       ({ pid }) => pid !== process.pid,
     );
@@ -93,19 +115,27 @@ async function watchdogPass(deps: WatchdogDeps & { config: LlmConfig }): Promise
     process.stderr.write(
       `${formatGuardDeny(decision as GuardDecision, "codex", decision.sessionId)}\n`,
     );
-    (deps.log ?? (() => {}))(
-      killedPids.length > 0
-        ? `killed codex processes: ${killedPids.join(", ")}`
-        : "budget tripped but no running codex processes found",
-    );
-    return { blocked: true, killedPids };
+    if (firstTrip) {
+      notifyFn(
+        "llm-budget",
+        "Codex weekly budget tripped — running Codex sessions were stopped. Run llm-budget status.",
+      );
+      log(
+        killedPids.length > 0
+          ? `killed codex processes: ${killedPids.join(", ")}`
+          : "budget tripped but no running codex processes found",
+      );
+    } else if (killedPids.length > 0) {
+      log(`still over budget; killed newly seen codex processes: ${killedPids.join(", ")}`);
+    }
+    return { blocked: true, killedPids, notified: firstTrip };
   }
 
   if (getState(db, "codex_watchdog_trip") === "active") {
     setState(db, "codex_watchdog_trip", "");
-    (deps.log ?? (() => {}))("budget recovered; watchdog re-armed");
+    log("budget recovered; watchdog re-armed");
   }
-  return { blocked: false, killedPids: [] };
+  return { blocked: false, killedPids: [], notified: false };
 }
 
 /** `ps` scan for processes whose args reference a codex binary. */
@@ -122,7 +152,7 @@ export function defaultListCodexProcesses(): Array<{ pid: number; command: strin
     const command = trimmed.slice(spaceIdx + 1).trim();
     if (!Number.isInteger(pid)) continue;
     if (!/(^|\/)(codex)(\s|$)/.test(command)) continue;
-    // Never match our own CLI (it embeds "llm-budget", not plain codex, but be safe).
+    // Never match our own CLI.
     if (command.includes("llm-budget")) continue;
     out.push({ pid, command });
   }

@@ -63,7 +63,7 @@ export async function handleHook(
     if (ENFORCE_EVENTS.has(eventName)) {
       const detail = error instanceof Error ? error.message : String(error);
       return deny(
-        `cursor-budget failed to load config: ${detail}\nSession id: ${conversationId || "unknown"}`,
+        `llm-budget failed to load config: ${detail}\nSession id: ${conversationId || "unknown"}`,
       );
     }
     return allow();
@@ -80,13 +80,13 @@ export async function handleHook(
       // is config-only and therefore still works.
       const id = conversationId || "unknown";
       const message = [
-        `cursor-budget failed closed: ${error instanceof Error ? error.message : String(error)}`,
+        `llm-budget failed closed: ${error instanceof Error ? error.message : String(error)}`,
         "",
         `Session id: ${id}`,
         "",
         "Recover with:",
-        `  cursor-budget except add ${id}`,
-        "  cursor-budget status",
+        `  llm-budget cursor except add ${id}`,
+        "  llm-budget cursor status",
       ].join("\n");
       return deny(message);
     }
@@ -198,7 +198,7 @@ export async function resolvePeriodUsage(
       return {
         periodUsage: null,
         usageUnknownReason: hint,
-        authHint: `cursor-budget: ${hint}`,
+        authHint: `llm-budget: ${hint}`,
       };
     }
     const detail = error instanceof Error ? error.message : String(error);
@@ -243,7 +243,7 @@ function maybeWarnAuthExpiry(now: Date, home?: string): void {
     if (hasWarning(db, "authExpiry", threshold, periodKey)) continue;
     markWarning(db, "authExpiry", threshold, periodKey, now.toISOString());
     notify(
-      "cursor-budget",
+      "llm-budget",
       daysLeft <= 0
         ? "Cursor credential has expired. Re-authenticate with cursor-agent — the budget guard is blocking until you do."
         : `Cursor credential expires in ${Math.max(0, Math.floor(daysLeft))}d. Re-authenticate with cursor-agent before the guard starts blocking.`,
@@ -305,7 +305,7 @@ function warnMeter(input: {
     if (hasWarning(db, windowId, threshold, periodKey)) continue;
     markWarning(db, windowId, threshold, periodKey, now.toISOString());
     notify(
-      "cursor-budget",
+      "llm-budget",
       `LLM budget: ${Math.round(ratio * 100)}% of ${label} block threshold\n${formatPercentValue(percentUsed)} used (block at ${formatPercentValue(blockAt)})`,
     );
   }

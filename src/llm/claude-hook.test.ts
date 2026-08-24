@@ -6,8 +6,10 @@ import test from "node:test";
 import { openLlmDb, setState } from "./db.js";
 import { DEFAULT_CONFIG, ensureLlmConfig, type LlmConfig } from "./config.js";
 import {
+  ClaudeHookInputError,
   CLAUDE_ENFORCE_EVENTS,
   handleClaudeHook,
+  parseClaudeHookInput,
   type ClaudeHookEvent,
 } from "./claude-hook.js";
 import { installClaudeHooks, uninstallClaudeHooks } from "./claude-install.js";
@@ -200,4 +202,16 @@ test("hook event without session id still formats a usable block message", () =>
   const response = handleClaudeHook(event, { home, config: baseConfig() });
   assert.equal(response.block, true);
   assert.match(response.message!, /Session id: unknown/);
+});
+
+test("malformed or empty hook input fails closed", () => {
+  // Claude Code always pipes JSON; empty or garbage stdin means something
+  // upstream is broken and must not read as "no event".
+  assert.throws(() => parseClaudeHookInput(""), ClaudeHookInputError);
+  assert.throws(() => parseClaudeHookInput("   \n"), ClaudeHookInputError);
+  assert.throws(() => parseClaudeHookInput('{"hook_event_name":"UserPromptSubmit"'), ClaudeHookInputError);
+  assert.throws(() => parseClaudeHookInput("not json at all"), ClaudeHookInputError);
+
+  const ok = parseClaudeHookInput('{"hook_event_name":"Stop","session_id":"s"}');
+  assert.equal(ok.hook_event_name, "Stop");
 });
