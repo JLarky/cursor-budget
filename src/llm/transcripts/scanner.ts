@@ -27,6 +27,8 @@ export interface ScanStats {
   scannedFiles: number;
   skippedFiles: number;
   failedFiles: number;
+  /** Paths of files that could not be read/parsed (capped, oldest last). */
+  failedFileNames?: string[];
   malformedLines: number;
   addedEvents: number;
   updatedEvents: number;
@@ -118,13 +120,19 @@ export function collectAgentUsage(agent: AgentKind, options: CollectOptions = {}
   stats.totalFiles = files.length;
   if (unreadableRoots.length > 0) stats.unreadableRoots = unreadableRoots;
 
+  const recordFailure = (file: string) => {
+    stats.failedFiles += 1;
+    stats.failedFileNames ??= [];
+    if (stats.failedFileNames.length < 5) stats.failedFileNames.push(file);
+  };
+
   for (const file of files) {
     let beforeStat: { size: number; mtimeMs: number };
     try {
       const st = statSync(file);
       beforeStat = { size: Number(st.size), mtimeMs: Number(st.mtimeMs) };
     } catch {
-      stats.failedFiles += 1;
+      recordFailure(file);
       continue;
     }
 
@@ -158,7 +166,7 @@ export function collectAgentUsage(agent: AgentKind, options: CollectOptions = {}
         );
       }
     } catch {
-      stats.failedFiles += 1;
+      recordFailure(file);
       continue;
     }
 

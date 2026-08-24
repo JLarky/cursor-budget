@@ -102,6 +102,31 @@ test("pathHash is stable for identical paths", () => {
   assert.notEqual(pathHash("/a/b.jsonl"), pathHash("/a/c.jsonl"));
 });
 
+test("rolling window is half-open: an event exactly windowMs old ages out", () => {
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-test-"));
+  mkdirSync(join(home, ".codex"), { recursive: true });
+  const db = openLlmDb(home);
+  const nowMs = new Date("2026-08-24T12:00:00.000Z").getTime();
+  // One event exactly 5h old, one a millisecond newer.
+  db.prepare(
+    `INSERT INTO token_events (event_key, agent, session_id, ts, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, total_tokens)
+     VALUES ('edge', 'codex', 's', ?, 100, 0, 0, 0, 0, 100)`,
+  ).run(new Date(nowMs - 5 * 3_600_000).toISOString());
+  db.prepare(
+    `INSERT INTO token_events (event_key, agent, session_id, ts, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_write_tokens, total_tokens)
+     VALUES ('inside', 'codex', 's', ?, 1, 0, 0, 0, 0, 1)`,
+  ).run(new Date(nowMs - 5 * 3_600_000 + 1).toISOString());
+
+  const from = new Date(nowMs - 5 * 3_600_000);
+  const to = new Date(nowMs);
+  const closed = sumTokenEventsByModel(db, "codex", from, to);
+  assert.equal(closed[0]?.totalTokens, 101); // legacy [from,to] behavior
+  const halfOpen = sumTokenEventsByModel(db, "codex", from, to, [], {
+    fromInclusive: false,
+  });
+  assert.equal(halfOpen[0]?.totalTokens, 1); // boundary event aged out
+});
+
 test("unreadable roots are reported, missing roots stay silent", () => {
   const home = mkdtempSync(join(tmpdir(), "llm-budget-test-"));
   const locked = join(home, "locked-root");

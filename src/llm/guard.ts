@@ -12,6 +12,7 @@ import {
   type BudgetEvaluation,
 } from "./budget/evaluator.js";
 import { loadRates } from "./pricing.js";
+import type { WindowMeasurement } from "./budget/evaluator.js";
 import {
   collectAgentUsage,
   type AgentKind,
@@ -65,8 +66,6 @@ export function runGuard(
   config: LlmConfig,
   deps: GuardDeps = {},
 ): GuardDecision {
-  const now = deps.now ?? new Date();
-
   // Disabled agents short-circuit before any storage, transcript, or pricing
   // work: opting out of a tool's guard must not be able to block it either.
   const enabled = agent === "claude" ? config.claudeCode.enabled : config.codex.enabled;
@@ -94,6 +93,10 @@ export function runGuard(
     scanFailed = true;
   }
 
+  // Capture time AFTER scanning so events appended while we scanned (or
+  // timestamped by file mtime during the scan) are inside the windows.
+  const now = deps.now ?? new Date();
+
   const excluded = Boolean(deps.sessionId && config.excludeSessionIds.includes(deps.sessionId));
 
   const overrideRaw = getState(db, "override_until");
@@ -105,23 +108,33 @@ export function runGuard(
       "local transcript database could not be read or updated (run llm-budget status)";
   } else if (stats.unreadableRoots && stats.unreadableRoots.length > 0) {
     usageUnknownReason = `transcript directories unreadable: ${stats.unreadableRoots.join("; ")}`;
-  } else if (
-    stats.totalFiles > 0 &&
-    stats.scannedFiles === 0 &&
-    stats.skippedFiles === 0
-  ) {
-    usageUnknownReason = `all ${stats.totalFiles} transcript files failed to read`;
+  } else if ((stats.failedFiles ?? 0) > 0) {
+    // Any unreadable file may hold threshold-crossing usage we cannot see.
+    const names = (stats.failedFileNames ?? []).map((f) => f.split("/").pop()).join(", ");
+    usageUnknownReason =
+      `${stats.failedFiles} transcript file(s) unreadable` +
+      (names ? ` (${names})` : "") +
+      " — their usage cannot be counted";
   }
-  const windowMeasurements = buildMeasurements(
-    agent,
-    config,
-    db,
-    rates.rates.size > 0 ? rates : null,
-    now,
-  );
+  // Always pass the resolved table even when empty: with a USD denominator an
+  // empty table must flag every model as unpriced (missing money), not skip
+  // pricing entirely.
+  const built = buildMeasurements(agent, config, db, rates, now);
+
+  // A USD denominator with unpriced models means measured spend is missing
+  // money, not zero money — same fail-closed treatment as unknown usage.
+  if (
+    usageUnknownReason === null &&
+    config.budget.denominator.kind === "usd" &&
+    built.unpricedModels.length > 0
+  ) {
+    usageUnknownReason =
+      `models without rates cost $0 in the math: ${built.unpricedModels.slice(0, 5).join(", ")}` +
+      " — run llm-budget import-rates";
+  }
 
   const evaluation = evaluateBudget({
-    measurements: windowMeasurements,
+    measurements: built.measurements,
     overrideUntil,
     now,
     excluded,
@@ -144,45 +157,56 @@ function buildMeasurements(
   db: ReturnType<typeof openLlmDb>,
   rates: Parameters<typeof windowUsage>[4],
   now: Date,
-) {
+): { measurements: WindowMeasurement[]; unpricedModels: string[] } {
   const denom = config.budget.denominator;
   const denomLabel = denominatorAmount(denom);
   const weekFrom = utcWeekStart(now);
-  const weeklyUsage = windowUsage(db, agent, weekFrom, now, rates, config.excludeSessionIds);
 
   if (agent === "claude") {
+    // Rolling windows are half-open (from, to]: an event exactly at
+    // now-windowMs has aged out.
     const rollFrom = rollingWindowStart(now, config.claudeCode.rollingWindowMs);
-    const rollingUsage = windowUsage(db, agent, rollFrom, now, rates, config.excludeSessionIds);
-    return [
+    const weeklyUsage = windowUsage(db, agent, weekFrom, now, rates, config.excludeSessionIds);
+    const rollingUsage = windowUsage(db, agent, rollFrom, now, rates, config.excludeSessionIds, {
+      fromInclusive: false,
+    });
+    return {
+      measurements: [
+        {
+          windowId: "claudeWeekly",
+          label: "Weekly",
+          usedPct: usedPctOf(denom, weeklyUsage),
+          blockAtPct: config.claudeCode.weeklyBlockAtPercent,
+          usedDisplay: usageDisplay(weeklyUsage, denom.kind),
+          denomDisplay: denomLabel,
+        },
+        {
+          windowId: "claudeRolling",
+          label: `Rolling ${formatHours(config.claudeCode.rollingWindowMs)}`,
+          usedPct: usedPctOf(denom, rollingUsage),
+          blockAtPct: config.claudeCode.rolling5hBlockAtPercent,
+          usedDisplay: usageDisplay(rollingUsage, denom.kind),
+          denomDisplay: denomLabel,
+        },
+      ],
+      unpricedModels: [...new Set([...weeklyUsage.unpricedModels, ...rollingUsage.unpricedModels])],
+    };
+  }
+
+  const weeklyUsage = windowUsage(db, agent, weekFrom, now, rates, config.excludeSessionIds);
+  return {
+    measurements: [
       {
-        windowId: "claudeWeekly" as const,
+        windowId: "codexWeekly",
         label: "Weekly",
         usedPct: usedPctOf(denom, weeklyUsage),
-        blockAtPct: config.claudeCode.weeklyBlockAtPercent,
+        blockAtPct: config.codex.weeklyBlockAtPercent,
         usedDisplay: usageDisplay(weeklyUsage, denom.kind),
         denomDisplay: denomLabel,
       },
-      {
-        windowId: "claudeRolling" as const,
-        label: `Rolling ${formatHours(config.claudeCode.rollingWindowMs)}`,
-        usedPct: usedPctOf(denom, rollingUsage),
-        blockAtPct: config.claudeCode.rolling5hBlockAtPercent,
-        usedDisplay: usageDisplay(rollingUsage, denom.kind),
-        denomDisplay: denomLabel,
-      },
-    ];
-  }
-
-  return [
-    {
-      windowId: "codexWeekly" as const,
-      label: "Weekly",
-      usedPct: usedPctOf(denom, weeklyUsage),
-      blockAtPct: config.codex.weeklyBlockAtPercent,
-      usedDisplay: usageDisplay(weeklyUsage, denom.kind),
-      denomDisplay: denomLabel,
-    },
-  ];
+    ],
+    unpricedModels: weeklyUsage.unpricedModels,
+  };
 }
 
 function formatHours(ms: number): string {

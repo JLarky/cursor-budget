@@ -80,3 +80,58 @@ test("unreadable transcript roots become usageUnknown under failClosed", () => {
   assert.equal(reason?.windowId, "usageUnknown");
   assert.match(reason?.detail ?? "", /EACCES/);
 });
+
+test("partially unreadable transcripts become usageUnknown, not partial usage", () => {
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-guard4-"));
+  const decision = runGuard("claude", config({}), {
+    home,
+    now: new Date(),
+    scan: () => ({
+      ...ZERO,
+      totalFiles: 2,
+      scannedFiles: 1,
+      failedFiles: 1,
+      failedFileNames: ["/home/x/.claude/projects/p/big.jsonl"],
+    }),
+  });
+  assert.equal(decision.allow, false);
+  assert.equal(decision.evaluation.reasons[0]?.windowId, "usageUnknown");
+  assert.match(decision.evaluation.reasons[0]?.detail ?? "", /1 transcript file\(s\) unreadable/);
+});
+
+test("USD denominator with unpriced models fails closed", () => {
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-guard5-"));
+  const db = openLlmDb(home);
+  db.prepare(
+    `INSERT INTO token_events (
+      event_key, agent, session_id, model, ts,
+      input_tokens, output_tokens, reasoning_tokens,
+      cache_read_tokens, cache_write_tokens, total_tokens
+    ) VALUES ('u1', 'codex', 's', 'brand-new-model', ?, 5000, 0, 0, 0, 0, 5000)`,
+  ).run(new Date().toISOString());
+
+  const decision = runGuard(
+    "codex",
+    config({ denominator: { kind: "usd", weeklyUsd: 35 } }),
+    { home, now: new Date(), scan: () => ({ ...ZERO }) },
+  );
+  // The model has no rate → measured spend is $0, which must read as unknown
+  // rather than "plenty left".
+  assert.equal(decision.allow, false);
+  assert.equal(decision.evaluation.reasons[0]?.windowId, "usageUnknown");
+  assert.match(decision.evaluation.reasons[0]?.detail ?? "", /brand-new-model/);
+
+  // With rates on file for that model the guard allows again.
+  const priced = runGuard(
+    "codex",
+    {
+      ...config({ denominator: { kind: "usd", weeklyUsd: 35 } }),
+      budget: {
+        denominator: { kind: "usd", weeklyUsd: 35 },
+        rates: { "brand-new-model": { input: 0.01, output: 0.03 } },
+      },
+    },
+    { home, now: new Date(), scan: () => ({ ...ZERO }) },
+  );
+  assert.equal(priced.allow, true);
+});

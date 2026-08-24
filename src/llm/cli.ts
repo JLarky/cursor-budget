@@ -200,29 +200,13 @@ function respondToClaudeHook(event: ClaudeHookEvent): void {
 }
 
 /**
- * Block path for Claude Code hooks: human message on stderr (fed back by every
- * hook type), machine-readable JSON on stdout for modern clients, exit code 2
- * (the portable blocking error).
+ * Block path for Claude Code hooks: the human-readable message goes to stderr
+ * (fed back by every hook type) and exit code 2 is the portable blocking
+ * error. We deliberately do NOT also write stdout JSON: mixing protocols is
+ * ambiguous across client versions — exit 2 + stderr is honored everywhere.
  */
-function blockClaudeHook(eventName: string, message: string): void {
+function blockClaudeHook(_eventName: string, message: string): void {
   process.stderr.write(`${message}\n`);
-  const payload: Record<string, unknown> =
-    eventName === "PreToolUse"
-      ? {
-          decision: "block",
-          reason: message,
-          hookSpecificOutput: {
-            hookEventName: "PreToolUse",
-            permissionDecision: "deny",
-            permissionDecisionReason: message,
-          },
-        }
-      : { decision: "block", reason: message };
-  try {
-    process.stdout.write(JSON.stringify(payload));
-  } catch {
-    // stderr already carries the human-readable block; nothing else to do.
-  }
   process.exit(2);
 }
 

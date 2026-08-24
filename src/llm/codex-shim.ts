@@ -43,9 +43,17 @@ if [ -z "$NODE" ]; then
 fi
 SHIM_DIR=${JSON.stringify(shimDirValue)}
 SAVE_PATH="$PATH"
-PATH="\${PATH//"$SHIM_DIR":/}"
-PATH="\${PATH//:$SHIM_DIR/}"
-PATH="\${PATH//$SHIM_DIR/}"
+# Remove SHIM_DIR as an exact PATH component (never substring-matching
+# similar dirs like "$SHIM_DIR-tools").
+NEW_PATH=""
+OLDIFS="$IFS"
+IFS=":"
+for d in $SAVE_PATH; do
+  [ "$d" = "$SHIM_DIR" ] && continue
+  NEW_PATH="\${NEW_PATH:+\${NEW_PATH}:}\${d}"
+done
+IFS="$OLDIFS"
+PATH="$NEW_PATH"
 REAL="$(command -v codex 2>/dev/null)"
 PATH="$SAVE_PATH"
 if [ -z "$REAL" ]; then

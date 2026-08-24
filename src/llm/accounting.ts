@@ -31,8 +31,9 @@ export function windowUsage(
   to: Date,
   rates: ResolvedRates | null,
   excludeSessionIds: string[] = [],
+  opts: { fromInclusive?: boolean } = {},
 ): WindowUsage {
-  const byModel = sumTokenEventsByModel(db, agent, from, to, excludeSessionIds);
+  const byModel = sumTokenEventsByModel(db, agent, from, to, excludeSessionIds, opts);
   const totals: TokenTotals = { ...EMPTY_TOTALS };
   let usd = 0;
   let events = 0;

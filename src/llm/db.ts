@@ -140,14 +140,18 @@ const ZERO_TOTALS: TokenTotals = {
   totalTokens: 0,
 };
 
-/** Per-model sums in `[from, to]`. Models without rows simply don't appear. */
+/** Per-model sums in the window. Default `[from, to]`; rolling windows pass
+ * `{ fromInclusive: false }` for a half-open `(from, to]` so an event exactly
+ * `windowMs` old ages out instead of pinning the window open. */
 export function sumTokenEventsByModel(
   db: DatabaseSync,
   agent: string,
   from: Date,
   to: Date,
   excludeSessionIds: string[] = [],
+  opts: { fromInclusive?: boolean } = {},
 ): Array<{ model: string | null; sessions: Set<string>; events: number } & TokenTotals> {
+  const fromOp = opts.fromInclusive === false ? ">" : ">=";
   const excluded = excludeSessionIds.filter(Boolean);
   const excludeClause =
     excluded.length > 0
@@ -163,7 +167,7 @@ export function sumTokenEventsByModel(
               SUM(cache_write_tokens) AS cache_write_tokens,
               SUM(total_tokens) AS total_tokens
        FROM token_events
-       WHERE agent = ? AND ts >= ? AND ts <= ? ${excludeClause}
+       WHERE agent = ? AND ts ${fromOp} ? AND ts <= ? ${excludeClause}
        GROUP BY model, session_id`,
     )
     .all(agent, from.toISOString(), to.toISOString(), ...excluded) as Array<

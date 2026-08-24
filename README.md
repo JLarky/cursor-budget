@@ -193,9 +193,11 @@ Percentages are against a budget you define — explicit, not implied:
 
 Token totals count every billed bucket (input + output + reasoning + cache
 read + cache write), matching what your provider actually meters. With a USD
-denominator, models without rates are reported as `unpriced` in `status` —
-they cost $0 in the math rather than being guessed, which means an incomplete
-rate table can only under-block. Keep an eye on that warning.
+denominator, models without rates make measured spend *missing money*, not
+zero money — the guard treats that as unknown usage and blocks under the
+default `failClosed: true` until you price them (`llm-budget import-rates` or
+inline `budget.rates`). Set `failClosed: false` if you would rather be warned
+than blocked; `status` always lists unpriced models either way.
 
 ### Weekly boundary (pinned UTC week)
 
@@ -216,10 +218,13 @@ node dist/llm/cli.js claude install     # registers UserPromptSubmit + PreToolUs
 node dist/llm/cli.js claude uninstall
 ```
 
-Every prompt and tool call re-reads transcripts and blocks (exit code 2 plus a
-JSON decision) once either gate trips — the weekly cap or the rolling 5-hour
-window. Fail-closed: broken config or unreadable state blocks with the session
-id and escape hatches printed. Restart running sessions after install.
+Every prompt and tool call re-reads transcripts and blocks once either gate
+trips — the weekly cap or the rolling 5-hour window. The block protocol is
+deliberately single-channel: a human-readable reason on **stderr** plus exit
+code 2, which every Claude Code hook type honors (mixing in stdout JSON is
+ambiguous across client versions). Fail-closed: broken config, unreadable hook
+input, or unreadable state blocks with the session id and escape hatches
+printed. Restart running sessions after install.
 
 `Stop` is deliberately not hooked: it fires after the response is already
 billed, and blocking it would only make Claude keep working.
