@@ -69,7 +69,7 @@ function fakeResult(
 }
 
 test("invalid config.jsonc denies enforce events instead of failing open", async () => {
-  const home = mkdtempSync(join(tmpdir(), "cursor-budget-hook-"));
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-hook-"));
   try {
     mkdirSync(join(home, ".cursor", "llm-budget"), { recursive: true });
     writeFileSync(
@@ -96,7 +96,7 @@ test("invalid config.jsonc denies enforce events instead of failing open", async
 });
 
 test("invalid config.jsonc still allows non-enforce record events", async () => {
-  const home = mkdtempSync(join(tmpdir(), "cursor-budget-hook-rec-"));
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-hook-rec-"));
   try {
     mkdirSync(join(home, ".cursor", "llm-budget"), { recursive: true });
     writeFileSync(join(home, ".cursor", "llm-budget", "config.jsonc"), "{not-json");
@@ -241,7 +241,7 @@ test("§5 HTTP 401 blocks by default and names the fix", async () => {
 });
 
 test("§5 an active override survives unknown usage", async () => {
-  const home = mkdtempSync(join(tmpdir(), "cursor-budget-override-"));
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-override-"));
   try {
     setState(openDb(home), "override_until", new Date(Date.now() + 60_000).toISOString());
     const response = await handleHook(
@@ -275,7 +275,7 @@ test("§5 null percent field does not block", async () => {
 });
 
 test("event-count backstop blocks when over threshold", async () => {
-  const home = mkdtempSync(join(tmpdir(), "cursor-budget-events-"));
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-events-"));
   try {
     const config = structuredClone(DEFAULT_CONFIG);
     config.rateLimit.maxEventsPerHour = 2;
@@ -317,7 +317,7 @@ test("event-count backstop blocks when over threshold", async () => {
 });
 
 test("override and except bypass both gates", async () => {
-  const home = mkdtempSync(join(tmpdir(), "cursor-budget-bypass-"));
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-bypass-"));
   try {
     const config = structuredClone(DEFAULT_CONFIG);
     config.quota.cursorModelsBlockAtPercent = 1;
@@ -352,7 +352,7 @@ test("override and except bypass both gates", async () => {
 });
 
 test("warnings fire once per threshold per billing cycle", async () => {
-  const home = mkdtempSync(join(tmpdir(), "cursor-budget-warn-"));
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-warn-"));
   try {
     const config = structuredClone(DEFAULT_CONFIG);
     config.quota.cursorModelsBlockAtPercent = 100;

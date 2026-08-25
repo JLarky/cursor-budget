@@ -24,7 +24,7 @@ import {
   providerUsage,
   type PaseoUsageSnapshot,
 } from "./paseo.js";
-// Cursor scope: reuse the original modules unchanged.
+// Cursor Agent scope — same binary, own store (dashboard API + ~/.cursor/llm-budget).
 import { exceptCommand as cursorExceptCommand } from "../commands/except.js";
 import { historyCommand as cursorHistoryCommand } from "../commands/history.js";
 import { installCommand as cursorInstallCommand } from "../commands/install.js";
@@ -146,7 +146,7 @@ async function main(): Promise<void> {
   }
 }
 
-/** `llm-budget cursor ...` — the original Cursor Agent guard. */
+/** `llm-budget cursor ...` — Cursor Agent scope. */
 async function cursorScope(args: string[]): Promise<void> {
   const [sub, ...rest] = args;
   switch (sub) {
@@ -275,18 +275,22 @@ Scopes \u2014 every agent supports: install | uninstall | help
   llm-budget codex help         Codex CLI \u2014 PATH shim + sidecar watchdog
   llm-budget cursor help        Cursor Agent \u2014 dashboard API + ~/.cursor/hooks.json
 
-Shared commands (Claude Code and Codex):
-  llm-budget override <duration>       Temporarily bypass the gates
-  llm-budget override off              Clear the override
-  llm-budget except add <session-id>
-  llm-budget except remove <session-id>
-  llm-budget except list
-  llm-budget config
+Claude Code and Codex share ~/.llm-budget/ (override, except, config).
+Cursor Agent uses the same verbs under \`llm-budget cursor ...\` because its
+dashboard state lives in ~/.cursor/llm-budget/.
 
-How limits work: percentages come from the Paseo daemon (Anthropic and
-OpenAI report their own limits). Each gate blocks when usage reaches its
-configured percent \u2014 no token or dollar budgets anywhere. If Paseo is
-unreachable the guards block by default (fail closed).
+  llm-budget override <duration>         Bypass Claude Code + Codex gates
+  llm-budget cursor override <duration>  Bypass Cursor Agent gates
+  llm-budget except add <session-id>
+  llm-budget cursor except add <session-id>
+  llm-budget config
+  llm-budget cursor config
+
+How limits work: Claude Code and Codex read percentages from the Paseo
+daemon (Anthropic and OpenAI report their own limits). Cursor Agent reads
+the Cursor dashboard API. Each gate blocks when usage reaches its
+configured percent. If usage is unknown the guards block by default
+(fail closed).
 `;
 
 async function statusCommand(home = homedir()): Promise<string> {
@@ -343,8 +347,8 @@ async function statusCommand(home = homedir()): Promise<string> {
       }
     }
 
-    // Per-agent escape hatches: claude+codex share one store; cursor has its
-    // own (rendered inside its block below).
+    // Escape hatches for this store (Claude Code and Codex share it).
+    // Cursor Agent's override/exceptions render in its own block below.
     const overrideRaw = getState(db, "override_until");
     lines.push(`  Override: ${overrideRaw ? `until ${overrideRaw}` : "none"}`);
     lines.push(
@@ -353,9 +357,9 @@ async function statusCommand(home = homedir()): Promise<string> {
     lines.push("  On unknown usage: block (failClosed)");
   }
 
-  // Cursor Agent rides in the same status view so one command covers all
-  // three guards. Its dashboard state lives in ~/.cursor/llm-budget and may
-  // be unavailable offline — render whatever it reports, indented.
+  // Cursor Agent is a peer of Claude Code and Codex in this view. Dashboard
+  // state lives in ~/.cursor/llm-budget and may be unavailable offline —
+  // render whatever it reports, indented like the other agents.
   lines.push("");
   lines.push("Cursor Agent:");
   try {

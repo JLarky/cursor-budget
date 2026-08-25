@@ -29,7 +29,7 @@ test("rejects unknown top-level fields (including removed legacy keys)", () => {
 
 test("allows $schema and _comment annotations", () => {
   const config = parseConfig({
-    $schema: "https://example.com/cursor-budget.schema.json",
+    $schema: "https://example.com/llm-budget.schema.json",
     _comment: "quota caps",
     quota: { cursorModelsBlockAtPercent: 80 },
   });
@@ -82,7 +82,7 @@ test("accepts null totalBlockAtPercent and rate limit", () => {
 });
 
 test("ensureConfig treats whitespace-only file as empty object", () => {
-  const home = mkdtempSync(join(tmpdir(), "cursor-budget-ws-"));
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-ws-"));
   try {
     ensureConfig(home);
     writeFileSync(configPath(home), "  \n\t\n");
@@ -94,7 +94,7 @@ test("ensureConfig treats whitespace-only file as empty object", () => {
 });
 
 test("ensureConfig errors include config path and recovery hint", () => {
-  const home = mkdtempSync(join(tmpdir(), "cursor-budget-err-"));
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-err-"));
   try {
     ensureConfig(home);
     const path = configPath(home);
@@ -113,7 +113,7 @@ test("ensureConfig errors include config path and recovery hint", () => {
 
 
 test("writeConfig keeps the documented template after mutation", () => {
-  const home = mkdtempSync(join(tmpdir(), "cursor-budget-write-"));
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-write-"));
   try {
     const config = ensureConfig(home);
     config.excludeConversationIds = ["sess-1"];
@@ -121,7 +121,7 @@ test("writeConfig keeps the documented template after mutation", () => {
     // The rewritten file is still the full documented template and parses
     // back to exactly the written config.
     const text = readFileSync(configPath(home), "utf8");
-    assert.match(text, /llm-budget Cursor Agent guard configuration/);
+    assert.match(text, /llm-budget configuration/);
     assert.match(text, /"excludeConversationIds": \["sess-1"\]/);
     const reparsed = parseConfig(JSON.parse(stripJsoncComments(text)));
     assert.deepEqual(reparsed.excludeConversationIds, ["sess-1"]);

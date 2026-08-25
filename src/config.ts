@@ -167,7 +167,7 @@ export function parseConfig(raw: unknown): Config {
  */
 export function renderConfigFile(c: Config): string {
   const warnings = c.warnings.map((w) => `${w}`).join(", ");
-  return `// llm-budget Cursor Agent guard configuration \u2014 JSONC, so comments and
+  return `// llm-budget configuration \u2014 JSONC, so comments and
 // trailing commas are fine. Every field is listed with its current value;
 // delete a field to fall back to its noted default.
 {

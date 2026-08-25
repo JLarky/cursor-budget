@@ -37,3 +37,16 @@ test("status covers all three agents", { timeout: 60_000 }, async () => {
   assert.equal(result.stdout.split("Override:").length - 1 >= 3, true);
   assert.doesNotMatch(result.stdout, /\(claude\+codex\)/);
 });
+
+test("help lists three peer scopes and both override stores", async () => {
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-cli-help-"));
+  const result = await runCli(["help"], home);
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /llm-budget claude help/);
+  assert.match(result.stdout, /llm-budget codex help/);
+  assert.match(result.stdout, /llm-budget cursor help/);
+  assert.match(result.stdout, /llm-budget override /);
+  assert.match(result.stdout, /llm-budget cursor override /);
+  assert.doesNotMatch(result.stdout, /Shared commands \(Claude Code and Codex\)/);
+  assert.doesNotMatch(result.stdout, /the original Cursor/);
+});

@@ -20,7 +20,7 @@ const HOOK_EVENTS = [
 /** Old events we no longer handle — strip leftover entries on install. */
 const OBSOLETE_HOOK_EVENTS = ["preCompact"] as const;
 
-function isCursorBudgetEntry(entry: unknown): boolean {
+function isLlmBudgetEntry(entry: unknown): boolean {
   return (
     typeof entry === "object" &&
     entry !== null &&
@@ -29,12 +29,11 @@ function isCursorBudgetEntry(entry: unknown): boolean {
   );
 }
 
-export function installCommand(): string {
-  ensureConfig();
-  const home = homedir();
+export function installCommand(home = homedir()): string {
+  ensureConfig(home);
   const wrapper = hookWrapperPath(home);
   const hooksPath = hooksJsonPath(home);
-  const cli = join(fileURLToPath(new URL("../cli.js", import.meta.url)));
+  const cli = join(fileURLToPath(new URL("../llm/cli.js", import.meta.url)));
 
   mkdirSync(dirname(wrapper), { recursive: true });
   writeFileSync(
@@ -53,7 +52,7 @@ if [ -z "$NODE" ]; then
   echo '{"continue":true,"permission":"allow"}'
   exit 0
 fi
-exec "$NODE" ${JSON.stringify(cli)} hook "$@"
+exec "$NODE" ${JSON.stringify(cli)} cursor hook
 `,
   );
   chmodSync(wrapper, 0o755);
@@ -69,14 +68,14 @@ exec "$NODE" ${JSON.stringify(cli)} hook "$@"
 
   for (const event of OBSOLETE_HOOK_EVENTS) {
     const list = Array.isArray(hooks.hooks[event]) ? hooks.hooks[event] : [];
-    const next = list.filter((entry) => !isCursorBudgetEntry(entry));
+    const next = list.filter((entry) => !isLlmBudgetEntry(entry));
     if (next.length === 0) delete hooks.hooks[event];
     else hooks.hooks[event] = next;
   }
 
   for (const event of HOOK_EVENTS) {
     const list = Array.isArray(hooks.hooks[event]) ? hooks.hooks[event] : [];
-    const already = list.some(isCursorBudgetEntry);
+    const already = list.some(isLlmBudgetEntry);
     if (!already) {
       list.push({
         command: "./hooks/llm-budget",
@@ -87,5 +86,9 @@ exec "$NODE" ${JSON.stringify(cli)} hook "$@"
   }
 
   writeFileSync(hooksPath, `${JSON.stringify(hooks, null, 2)}\n`);
-  return `Installed llm-budget Cursor Agent hooks (failClosed: false)\n  ${hooksPath}\n  ${wrapper}\n`;
+  return [
+    "Installed llm-budget Cursor Agent hooks",
+    `  ${hooksPath}`,
+    `  ${wrapper}`,
+  ].join("\n") + "\n";
 }

@@ -2,13 +2,13 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 /**
- * State root for the Claude Code / Codex guard.
+ * State root for Claude Code and Codex.
  *
- * Deliberately separate from `~/.cursor/llm-budget`: the cursor config schema
- * is strict (unknown keys throw) so sharing one file would brick cursor
- * installs the moment an agent key appeared. Override and exception state are
- * per-tool on purpose too — unblocking Codex should not silently unblock
- * Cursor.
+ * Cursor Agent keeps dashboard state in `~/.cursor/llm-budget` because that
+ * config schema is strict (unknown keys throw) — sharing one file would
+ * brick one agent the moment the other's keys appeared. Override and
+ * exception state are per-store on purpose too: unblocking one agent must
+ * not silently unblock another.
  */
 export function llmBudgetDir(home = homedir()): string {
   return join(home, ".llm-budget");

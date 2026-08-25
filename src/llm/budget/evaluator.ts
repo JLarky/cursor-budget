@@ -33,8 +33,8 @@ export interface BudgetEvaluation {
 }
 
 /**
- * Decide whether to allow agent work, mirroring cursor-budget's evaluator:
- * escape hatches first, then every gate contributes block reasons.
+ * Decide whether to allow agent work: escape hatches first, then every
+ * gate contributes block reasons.
  */
 export function evaluateBudget(input: {
   measurements: WindowMeasurement[];

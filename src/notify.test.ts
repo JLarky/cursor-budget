@@ -20,7 +20,7 @@ test("notify ignores missing notify-send without throwing", async () => {
 
   try {
     const { notify } = await import("./notify.js");
-    assert.doesNotThrow(() => notify("cursor-budget", "hello"));
+    assert.doesNotThrow(() => notify("llm-budget", "hello"));
     assert.doesNotThrow(() => child.emit("error", Object.assign(new Error("ENOENT"), { code: "ENOENT" })));
   } finally {
     childProcess.spawn = originalSpawn;
