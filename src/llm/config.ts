@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { parseJsonc } from "../jsonc.js";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import * as v from "valibot";
@@ -7,14 +8,14 @@ import { llmConfigPath } from "./paths.js";
 /**
  * Percent-only configuration: every gate compares a provider-reported
  * percentage against a threshold. There are no token or dollar amounts —
- * the providers (via Paseo) own their limits; we only enforce thresholds.
+ * the providers own their limits; we only enforce thresholds.
  */
 
 export interface ClaudeCodeConfig {
   enabled: boolean;
-  /** Block at this % of Claude's weekly limit (Paseo `seven_day` window). */
+  /** Block at this % of Claude's weekly limit (vendor `weekly` / `seven_day` window). */
   weeklyBlockAtPercent: number;
-  /** Block at this % of Claude's 5h limit (Paseo `five_hour` window). */
+  /** Block at this % of Claude's 5h limit (vendor `five_hour` window). */
   rolling5hBlockAtPercent: number;
 }
 
@@ -34,7 +35,7 @@ export interface LlmConfig {
   codex: CodexConfig;
   enforcement: {
     /**
-     * When usage cannot be determined (Paseo unreachable, window missing),
+     * When usage cannot be determined (API unreachable, window missing),
      * block instead of allowing. Escape hatches stay open.
      */
     failClosed: boolean;
@@ -130,78 +131,6 @@ export function parseLlmConfig(raw: unknown): LlmConfig {
   };
 }
 
-/**
- * Strip `//` line comments and `/* ... *` block comments from JSONC source.
- * String literals are copied verbatim so a "//" inside a value survives.
- */
-export function stripJsoncComments(src: string): string {
-  let out = "";
-  let i = 0;
-  const n = src.length;
-  while (i < n) {
-    const c = src[i];
-    if (c === '"') {
-      let j = i + 1;
-      while (j < n) {
-        if (src[j] === "\\") j += 2;
-        else if (src[j] === '"') break;
-        else j++;
-      }
-      out += src.slice(i, Math.min(j + 1, n));
-      i = j + 1;
-      continue;
-    }
-    if (c === "/" && src[i + 1] === "/") {
-      while (i < n && src[i] !== "\n") i++;
-      continue;
-    }
-    if (c === "/" && src[i + 1] === "*") {
-      const end = src.indexOf("*" + "/", i + 2);
-      i = end === -1 ? n : end + 2;
-      continue;
-    }
-    out += c;
-    i++;
-  }
-  return out;
-}
-
-/** Drop commas immediately before `}` or `]` (JSONC allows them). */
-export function stripTrailingCommas(src: string): string {
-  let out = "";
-  let i = 0;
-  const n = src.length;
-  while (i < n) {
-    const c = src[i];
-    if (c === '"') {
-      let j = i + 1;
-      while (j < n) {
-        if (src[j] === "\\") j += 2;
-        else if (src[j] === '"') break;
-        else j++;
-      }
-      out += src.slice(i, Math.min(j + 1, n));
-      i = j + 1;
-      continue;
-    }
-    if (c === ",") {
-      let j = i + 1;
-      while (j < n && /\s/.test(src[j])) j++;
-      if (src[j] === "}" || src[j] === "]") {
-        i++;
-        continue;
-      }
-    }
-    out += c;
-    i++;
-  }
-  return out;
-}
-
-/** Parse JSONC text (comments and trailing commas tolerated). */
-export function parseJsonc(text: string): unknown {
-  return JSON.parse(stripTrailingCommas(stripJsoncComments(text)));
-}
 
 function loadRawConfig(home?: string): unknown {
   const path = llmConfigPath(home);
@@ -240,15 +169,16 @@ export function renderLlmConfigFile(c: LlmConfig): string {
 // Every field is listed with its current value; delete nothing you do not
 // understand \u2014 removing a field just falls back to the noted default.
 //
-// Percentages come from the Paseo daemon (Anthropic/OpenAI report their own
-// limits); each gate blocks once usage reaches its threshold.
+// Percentages come from the vendor usage APIs (Anthropic OAuth for Claude Code,
+// OpenAI rate-limit telemetry for Codex); each gate blocks once usage reaches
+// its threshold.
 {
   "claudeCode": {
     // Gate Claude Code sessions at all?
     "enabled": ${c.claudeCode.enabled},
-    // Block at this % of Claude's weekly limit (Paseo window "weekly"/"seven_day").
+    // Block at this % of Claude's weekly limit (window "weekly"/"seven_day").
     "weeklyBlockAtPercent": ${pct(c.claudeCode.weeklyBlockAtPercent)},
-    // Block at this % of Claude's 5-hour limit (Paseo window "five_hour").
+    // Block at this % of Claude's 5-hour limit (window "five_hour").
     "rolling5hBlockAtPercent": ${pct(c.claudeCode.rolling5hBlockAtPercent)}
   },
   "codex": {
@@ -260,7 +190,7 @@ export function renderLlmConfigFile(c: LlmConfig): string {
     "openAiWeeklyBlockAtPercent": ${c.codex.openAiWeeklyBlockAtPercent === null ? "null" : pct(c.codex.openAiWeeklyBlockAtPercent)}
   },
   "enforcement": {
-    // When usage cannot be determined (Paseo down), block instead of allow.
+    // When usage cannot be determined (API down), block instead of allow.
     "failClosed": ${c.enforcement.failClosed}
   },
   // Session ids that bypass every gate.

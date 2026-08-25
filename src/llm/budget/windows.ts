@@ -1,9 +1,6 @@
-import type { WindowId as CursorWindowId } from "../../budget/windows.js";
-
 /**
- * Window ids for the Claude/Codex guard. Distinct from cursor-budget's
- * `WindowId`s; reusing the label namespace would make block messages lie
- * about which tool tripped.
+ * Window ids for Claude Code and Codex. Separate from Cursor Agent's
+ * dashboard-meter ids so block messages name the right tool.
  */
 export type BudgetWindowId =
   | "claudeWeekly"
@@ -11,9 +8,7 @@ export type BudgetWindowId =
   | "codexWeekly"
   | "usageUnknown";
 
-// Keep the cursor module imported for `parseDuration` reuse below.
-export { parseDuration, rollingHour } from "../../budget/windows.js";
-export type { CursorWindowId };
+export { parseDuration } from "../../budget/windows.js";
 
 const DAY_MS = 86_400_000;
 

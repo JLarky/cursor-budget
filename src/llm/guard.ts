@@ -8,12 +8,12 @@ import {
 } from "./budget/evaluator.js";
 import type { WindowMeasurement } from "./budget/evaluator.js";
 import {
-  fetchPaseoUsage,
+  fetchDirectUsage,
   providerUsage,
-  type PaseoProviderUsage,
-  type PaseoUsageFetcher,
-  type PaseoUsageSnapshot,
-} from "./paseo.js";
+  type ProviderUsage,
+  type UsageFetcher,
+  type UsageSnapshot,
+} from "./usage/index.js";
 
 export type GuardAgent = "claude" | "codex";
 
@@ -23,25 +23,25 @@ export interface GuardDeps {
   now?: Date;
   /** Session id from the hook event (for exception matching). */
   sessionId?: string;
-  /** Injectable usage source (tests); defaults to the live Paseo daemon. */
-  fetchUsage?: PaseoUsageFetcher;
+  /** Injectable usage source (tests); defaults to the vendor usage APIs. */
+  fetchUsage?: UsageFetcher;
 }
 
-const ZERO_SNAPSHOT: PaseoUsageSnapshot = { fetchedAt: "", providers: [] };
+const ZERO_SNAPSHOT: UsageSnapshot = { fetchedAt: "", providers: [] };
 
 export interface GuardDecision {
   allow: boolean;
   evaluation: BudgetEvaluation;
   config: LlmConfig;
-  snapshot: PaseoUsageSnapshot;
+  snapshot: UsageSnapshot;
   sessionId: string;
 }
 
 /**
- * One guard pass for one agent: read percentages from the Paseo daemon's
- * provider-usage feed, then evaluate the configured gates.
+ * One guard pass for one agent: read percentages from the vendor usage
+ * APIs, then evaluate the configured gates.
  *
- * Never throws for expected failure paths — an unreachable daemon or an
+ * Never throws for expected failure paths — an unreachable API or an
  * unavailable provider becomes a `usageUnknown` decision so fail-closed
  * callers can still block with a reason.
  */
@@ -70,23 +70,24 @@ export async function runGuard(
   const overrideRaw = getState(db, "override_until");
   const overrideUntil = overrideRaw ? new Date(overrideRaw) : null;
 
-  let snapshot: PaseoUsageSnapshot;
+  let snapshot: UsageSnapshot;
   let usageUnknownReason: string | null = null;
   try {
-    snapshot = deps.fetchUsage ? await deps.fetchUsage() : await fetchPaseoUsage();
+    snapshot = deps.fetchUsage
+      ? await deps.fetchUsage()
+      : await fetchDirectUsage({ home: deps.home });
   } catch (error) {
     snapshot = ZERO_SNAPSHOT;
     const detail = error instanceof Error ? error.message : String(error);
-    usageUnknownReason = `Paseo daemon unreachable — ${agent} usage unknown (${detail})`;
+    usageUnknownReason = `Could not fetch ${agent} usage (${detail})`;
   }
 
   const provider = usageUnknownReason ? null : providerUsage(snapshot, agent);
   if (!usageUnknownReason && !provider) {
-    usageUnknownReason =
-      `Paseo reported no ${agent} usage entry — is the ${agent} provider configured in Paseo?`;
+    usageUnknownReason = `No ${agent} usage entry — is ${agent} signed in?`;
   } else if (!usageUnknownReason && provider && provider.windows.length === 0) {
-    const detail = provider.error ? `: ${provider.error}` : "";
-    usageUnknownReason = `Paseo reports ${agent} usage ${provider.status}${detail}`;
+    const detail = provider.error ? ` — ${provider.error}` : "";
+    usageUnknownReason = `${agent} usage ${provider.status}${detail}`;
   }
 
   const measurements =
@@ -120,20 +121,19 @@ function effectiveCodexBlockAt(config: LlmConfig): number {
 function buildMeasurements(
   agent: GuardAgent,
   config: LlmConfig,
-  provider: PaseoProviderUsage,
+  provider: ProviderUsage,
 ): WindowMeasurement[] {
   const window = (id: string): (typeof provider.windows)[number] | null =>
     provider.windows.find((w) => w.id === id) ?? null;
 
   if (agent === "claude") {
     const measurements: WindowMeasurement[] = [];
-    // Daemon versions label the weekly window "weekly"; the fork's quota
-    // provider calls it "seven_day" — accept both.
+    // Vendor APIs label the weekly window "weekly"; older snapshots used "seven_day".
     const weekly = window("seven_day") ?? window("weekly");
     if (weekly) {
       measurements.push({
         windowId: "claudeWeekly",
-        label: "Weekly (paseo)",
+        label: "Weekly",
         usedPct: weekly.usedPct ?? Number.NaN,
         blockAtPct: config.claudeCode.weeklyBlockAtPercent,
         usedDisplay: pctDisplay(weekly.usedPct),
@@ -145,7 +145,7 @@ function buildMeasurements(
     if (rolling) {
       measurements.push({
         windowId: "claudeRolling",
-        label: "Rolling 5h (paseo)",
+        label: "Rolling 5h",
         usedPct: rolling.usedPct ?? Number.NaN,
         blockAtPct: config.claudeCode.rolling5hBlockAtPercent,
         usedDisplay: pctDisplay(rolling.usedPct),
@@ -178,7 +178,7 @@ function missingGates(agent: GuardAgent, measurements: WindowMeasurement[]): str
     agent === "claude" ? ["claudeWeekly", "claudeRolling"] : ["codexWeekly"];
   const missing = needed.filter((id) => !present.has(id));
   if (missing.length === 0) return null;
-  return `Paseo did not report the ${missing.join(", ")} window(s) for ${agent}`;
+  return `Usage API did not report the ${missing.join(", ")} window(s) for ${agent}`;
 }
 
 function pctDisplay(usedPct: number | null): string {

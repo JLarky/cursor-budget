@@ -8,10 +8,10 @@ import {
   DEFAULT_CONFIG,
   ensureConfig,
   parseConfig,
-  serializeConfig,
   writeConfig,
 } from "./config.js";
 import { configPath } from "./paths.js";
+import { stripJsoncComments } from "./jsonc.js";
 
 test("empty object uses defaults", () => {
   const config = parseConfig({});
@@ -29,7 +29,7 @@ test("rejects unknown top-level fields (including removed legacy keys)", () => {
 
 test("allows $schema and _comment annotations", () => {
   const config = parseConfig({
-    $schema: "https://example.com/cursor-budget.schema.json",
+    $schema: "https://example.com/llm-budget.schema.json",
     _comment: "quota caps",
     quota: { cursorModelsBlockAtPercent: 80 },
   });
@@ -82,7 +82,7 @@ test("accepts null totalBlockAtPercent and rate limit", () => {
 });
 
 test("ensureConfig treats whitespace-only file as empty object", () => {
-  const home = mkdtempSync(join(tmpdir(), "cursor-budget-ws-"));
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-ws-"));
   try {
     ensureConfig(home);
     writeFileSync(configPath(home), "  \n\t\n");
@@ -94,7 +94,7 @@ test("ensureConfig treats whitespace-only file as empty object", () => {
 });
 
 test("ensureConfig errors include config path and recovery hint", () => {
-  const home = mkdtempSync(join(tmpdir(), "cursor-budget-err-"));
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-err-"));
   try {
     ensureConfig(home);
     const path = configPath(home);
@@ -111,24 +111,20 @@ test("ensureConfig errors include config path and recovery hint", () => {
   }
 });
 
-test("serializeConfig omits defaults", () => {
-  const config = structuredClone(DEFAULT_CONFIG);
-  config.quota.cursorModelsBlockAtPercent = 80;
-  config.excludeConversationIds = ["abc"];
-  const file = serializeConfig(config);
-  assert.deepEqual(file.quota, { cursorModelsBlockAtPercent: 80 });
-  assert.deepEqual(file.excludeConversationIds, ["abc"]);
-  assert.equal("rateLimit" in file, false);
-});
 
-test("writeConfig stays compact after except-style mutation", () => {
-  const home = mkdtempSync(join(tmpdir(), "cursor-budget-write-"));
+test("writeConfig keeps the documented template after mutation", () => {
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-write-"));
   try {
     const config = ensureConfig(home);
     config.excludeConversationIds = ["sess-1"];
     writeConfig(config, home);
-    const raw = JSON.parse(readFileSync(configPath(home), "utf8")) as Record<string, unknown>;
-    assert.deepEqual(raw, { excludeConversationIds: ["sess-1"] });
+    // The rewritten file is still the full documented template and parses
+    // back to exactly the written config.
+    const text = readFileSync(configPath(home), "utf8");
+    assert.match(text, /llm-budget configuration/);
+    assert.match(text, /"excludeConversationIds": \["sess-1"\]/);
+    const reparsed = parseConfig(JSON.parse(stripJsoncComments(text)));
+    assert.deepEqual(reparsed.excludeConversationIds, ["sess-1"]);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

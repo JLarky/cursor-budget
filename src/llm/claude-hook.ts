@@ -39,7 +39,7 @@ export interface ClaudeHookDeps extends GuardDeps {
 /**
  * Decide allow/block for one Claude Code hook event.
  *
- * Mirrors cursor-budget's handleHook: config load failures deny enforce
+ * Same shape as handleHook: config load failures deny enforce
  * events with an escape-hatch message; guard failures become usageUnknown
  * blocks under failClosed; exceptions and overrides short-circuit first.
  */

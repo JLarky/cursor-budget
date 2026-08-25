@@ -6,7 +6,7 @@ import test from "node:test";
 import { exceptCommand } from "./except.js";
 
 test("except add, list, and remove a session id", () => {
-  const home = mkdtempSync(join(tmpdir(), "cursor-budget-"));
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-"));
   try {
     const added = exceptCommand(["add", "21623392-2ebe-4a2a-b906-e012529de912"], home);
     assert.match(added, /Excepted 21623392/);

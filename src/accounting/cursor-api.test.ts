@@ -55,7 +55,7 @@ function sampleRawWithSpend(totalSpend: number) {
 }
 
 function withTempDb<T>(fn: (db: ReturnType<typeof openDb>, home: string) => Promise<T> | T): Promise<T> {
-  const home = mkdtempSync(join(tmpdir(), "cursor-budget-api-"));
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-api-"));
   const db = openDb(home);
   return Promise.resolve(fn(db, home)).finally(() => {
     rmSync(home, { recursive: true, force: true });
@@ -210,7 +210,7 @@ test("resolveAccessToken without sources throws CursorAuthError", () => {
   delete process.env.CURSOR_ACCESS_TOKEN;
   try {
     assert.throws(
-      () => resolveAccessToken({ home: "/tmp/cursor-budget-no-auth-home" }),
+      () => resolveAccessToken({ home: "/tmp/llm-budget-no-auth-home" }),
       CursorAuthError,
     );
   } finally {

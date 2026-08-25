@@ -1,15 +1,15 @@
 # llm-budget
 
-Usage guards for **Cursor Agent**, **Claude Code**, and **Codex** — each stops
+Usage guards for **Claude Code**, **Codex**, and **Cursor Agent** — each stops
 its agent before you burn through your quota, using real reported usage as the
 source of truth, never a local estimate.
 
-One binary, one tool per agent:
+One binary, one scope per agent:
 
 ```sh
-llm-budget cursor status   # Cursor Agent  — dashboard API metering
-llm-budget claude install  # Claude Code   — transcript metering + native hooks
-llm-budget codex install   # Codex         — transcript metering + shim + watchdog
+llm-budget claude install  # Claude Code   — Anthropic usage API + native hooks
+llm-budget codex install   # Codex         — OpenAI usage API + shim + watchdog
+llm-budget cursor install  # Cursor Agent  — dashboard API + ~/.cursor/hooks.json
 ```
 
 **Repository:** https://github.com/JLarky/llm-budget
@@ -20,8 +20,8 @@ An earlier version of this tool did, and it was wrong by roughly 12x. Hooks
 don't see the real prompt payload — system prompts, file context, cache reads
 and reasoning tokens are all invisible — so any local estimate is guessing at
 the majority of the bill. Every guard here reads numbers the provider actually
-billed: the Cursor dashboard API for `cursor`, and API-reported token usage
-stamped into local transcripts for `claude` and `codex`.
+reports: Anthropic's OAuth usage API for `claude`, OpenAI's rate-limit
+telemetry for `codex`, and the Cursor dashboard API for `cursor`.
 
 ## Install
 
@@ -33,21 +33,69 @@ cd llm-budget
 npm install
 npm run build
 
-llm-budget cursor install    # register Cursor hooks
 llm-budget claude install    # register Claude Code hooks
 llm-budget codex install     # write the Codex PATH shim (then add it to PATH)
+llm-budget cursor install    # register Cursor Agent hooks
 ```
 
-### Cursor Agent scope
+## How it decides
 
-`llm-budget cursor install` writes a wrapper to `~/.cursor/hooks/llm-budget` and registers
-it in `~/.cursor/hooks.json`. On every prompt and tool call it checks real
-usage from the Cursor dashboard API and denies requests past your threshold.
-Undo with `llm-budget cursor uninstall`.
+Each agent has a percent gate against provider-reported usage, plus escape
+hatches (override and per-session exceptions). If usage cannot be determined
+the guard **blocks** by default (`failClosed: true`). Turn that off in config
+if you would rather not be interrupted.
+
+An override or a per-session exception bypasses the gates. Block messages
+print the session id and the recover commands, so you are never stuck without
+a way back in. Override and exceptions are per store — unblocking one agent
+never silently unblocks another.
+
+### Claude Code
+
+`llm-budget claude install` registers `UserPromptSubmit` + `PreToolUse` in
+`~/.claude/settings.json`. Every prompt and tool call re-checks Anthropic's
+usage API and
+blocks once either gate trips — the weekly cap or the rolling 5-hour window.
+The block protocol is a human-readable reason on **stderr** plus exit code 2.
+Undo with `llm-budget claude uninstall`. Restart running sessions after
+install.
+
+`Stop` is deliberately not hooked: it fires after the response is already
+billed, and blocking it would only make Claude keep working.
+
+### Codex
+
+Codex has no deny hooks, so enforcement is layered:
+
+```sh
+llm-budget codex install                # writes ~/.llm-budget/bin/codex shim
+export PATH="$HOME/.llm-budget/bin:$PATH"   # put it in your shell profile
+llm-budget watchdog                     # sidecar poller (default interval 15s)
+```
+
+- **Shim**: installed as a `codex` entrypoint; consults the guard, then execs
+  the real binary. Gates *starting* Codex.
+- **Watchdog**: re-evaluates every few seconds and SIGTERMs codex processes
+  while the weekly cap remains exceeded. The desktop notification fires only
+  on the trip transition. Kills re-arm when usage recovers (reset / override).
+- Optional instead of the poller: register `notify` in `~/.codex/config.toml`
+  to run `llm-budget codex-guard` after each turn.
+
+**Known gaps:** a single long-running turn can overshoot between watchdog
+ticks; anything that bypasses the shim (absolute paths, shell aliases made
+before install) skips the startup gate; the watchdog kills by process
+matching, which could miss renamed binaries.
+
+### Cursor Agent
+
+`llm-budget cursor install` writes a wrapper to `~/.cursor/hooks/llm-budget`
+and registers it in `~/.cursor/hooks.json`. On every prompt and tool call it
+checks real usage from the Cursor dashboard API and denies requests past your
+threshold. Undo with `llm-budget cursor uninstall`.
 
 ```
 $ llm-budget cursor status
-llm-budget (cursor)
+llm-budget
 
 Cursor Models (auto):
   1.38%  (block at 90%)
@@ -71,8 +119,6 @@ and the guard reads `~/.config/cursor/auth.json`. You can override with
 `CURSOR_ACCESS_TOKEN`. The token is never logged, printed, or copied into the
 local database — only the usage snapshot is cached.
 
-## How it decides (cursor)
-
 Two gates, in separate failure domains:
 
 | Gate | Source | Purpose |
@@ -80,33 +126,44 @@ Two gates, in separate failure domains:
 | **Quota** | Cursor dashboard API | the real limit — blocks at `%` of your plan |
 | **Rate** | local SQLite event count | runaway-loop catch, `500` events/hour |
 
-An **override** (`llm-budget cursor override 30m`) or a per-session
-**exception** (`llm-budget cursor except add <session-id>`) bypasses both. Every block message
-prints the session id and those two commands, so you are never stuck without a
-way back in.
+Cursor's `hooks.json` has its own unrelated `failClosed` field, which governs
+what Cursor does when the hook *process* fails. `install` sets it to `false`
+so a crash in this tool cannot lock up your editor.
 
-## Fail-closed by default
+You also get a notification as your Cursor credential nears expiry, since an
+expired token means the guard starts blocking.
 
-If usage cannot be determined — expired credential, API unreachable, cached
-snapshot older than `maxStaleMs` — the guard **blocks**. A budget guard whose
-failure mode is silently not guarding is worse than one that occasionally gets
-in the way.
+## Configuration
 
-Turn it off if you would rather not be interrupted:
+### Claude Code & Codex — `~/.llm-budget/config.jsonc`
+
+Only overrides are stored; defaults live in code. All keys optional.
 
 ```jsonc
-// ~/.cursor/llm-budget/config.json
-{ "enforcement": { "failClosed": false } }
+{
+  "claudeCode": {
+    "enabled": true,
+    "weeklyBlockAtPercent": 80,
+    "rolling5hBlockAtPercent": 80
+  },
+  "codex": {
+    "enabled": true,
+    "weeklyBlockAtPercent": 80
+  },
+  "enforcement": { "failClosed": true },
+  "excludeSessionIds": []
+}
 ```
 
-Note that Cursor's `hooks.json` has its own unrelated `failClosed` field, which
-governs what Cursor does when the hook *process* fails. `install` sets it to
-`false` so a crash in this tool cannot lock up your editor.
+Percentages come from the vendor usage APIs (Claude Code's local OAuth
+creds, Codex `auth.json`). Each gate blocks when usage reaches its
+threshold. If usage cannot be determined the guards block under the default
+`failClosed: true`.
 
-## Configuration (cursor)
+### Cursor Agent — `~/.cursor/llm-budget/config.jsonc`
 
-`~/.cursor/llm-budget/config.json`. Only overrides are stored; defaults live in
-code. All keys optional.
+Separate file on purpose: this schema is strict, so sharing `~/.llm-budget`
+would brick one agent the moment the other's keys appeared.
 
 ```jsonc
 {
@@ -125,164 +182,42 @@ code. All keys optional.
 ```
 
 Warnings fire as desktop notifications once per threshold per billing cycle.
-You also get a notification as your Cursor credential nears expiry, since an
-expired token means the guard starts blocking.
+
+```jsonc
+// turn fail-closed off if you would rather not be interrupted
+{ "enforcement": { "failClosed": false } }
+```
 
 ## Commands
 
-Cursor-scope commands (also available from `llm-budget cursor help`):
+Every agent supports `install | uninstall | help` under its scope.
 
 | Command | |
 |---|---|
-| `llm-budget cursor status` | current usage, thresholds, override state, credential expiry |
-| `llm-budget cursor spending` | raw period usage from the API as JSON |
-| `llm-budget cursor override <duration>` | temporarily bypass Cursor gates (e.g. `30m`) |
-| `llm-budget cursor override off` | clear the Cursor override |
-| `llm-budget cursor except add <session-id>` | permanently exempt a session |
-| `llm-budget cursor except remove <session-id>` | remove a session exception |
-| `llm-budget cursor except list` | list session exceptions |
-| `llm-budget cursor history` | recorded local events |
-| `llm-budget cursor config` | print resolved configuration |
-| `llm-budget cursor install` | manage hook registration |
-| `llm-budget cursor uninstall [--purge-data]` | remove hook registration |
-
-## Claude Code & Codex scopes
-
-The same guard philosophy extended to Claude Code CLI and Codex CLI. Instead
-of polling a dashboard API, these scopes meter what the CLIs themselves report — every assistant turn is stamped
-with **API-reported token usage** in local JSONL transcripts, so the numbers
-are real, not estimates:
-
-| Tool | Transcripts | Usage fields |
-|---|---|---|
-| Claude Code | `~/.claude/projects/**/*.jsonl` | `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` |
-| Codex | `~/.codex/sessions/**/*.jsonl`, `~/.codex/archived_sessions/**/*.jsonl` | per-call `last_token_usage`: input/output/reasoning/cached |
-
-Parsing follows the same rules as
-[token-tracker](https://github.com/JLarky/fork-token-tracker) (Codex's cached
-input and reasoning are subsets of their parent counters and are subtracted;
-cumulative `total_token_usage` lines are ignored; streamed duplicates of one
-message collapse into the fullest snapshot). Scans are checkpointed by file
-size + mtime, so re-checking between prompts only stats unchanged files.
-
-### Budget denominator
-
-Percentages are against a budget you define — explicit, not implied:
-
-```jsonc
-// ~/.llm-budget/config.jsonc — JSONC: comments and trailing commas are fine
-{
-  "budget": {
-    // Pick ONE:
-    "denominator": { "kind": "tokens", "weeklyTokens": 10000000 }
-    // "denominator": { "kind": "usd", "weeklyUsd": 35 },
-    //
-    // For USD, price models via `llm-budget import-rates <source-file>` (see below) or
-    // inline rates ($/1M tokens):
-    // "rates": { "claude-sonnet-5": { "input": 3, "output": 15 } }
-  },
-  "claudeCode": {
-    "weeklyBlockAtPercent": 80,
-    "rolling5hBlockAtPercent": 80,
-    "rollingWindowMs": 18000000   // 5h; configurable if you want a different window
-  },
-  "codex": {
-    "weeklyBlockAtPercent": 80
-  },
-  "enforcement": { "failClosed": true },
-  "excludeSessionIds": []
-}
-```
-
-Token totals count every billed bucket (input + output + reasoning + cache
-read + cache write), matching what your provider actually meters. With a USD
-denominator, models without rates make measured spend *missing money*, not
-zero money — the guard treats that as unknown usage and blocks under the
-default `failClosed: true` until you price them (`llm-budget import-rates <source-file>` or
-inline `budget.rates`). Set `failClosed: false` if you would rather be warned
-than blocked; `llm-budget status` always lists unpriced models either way.
-
-### Weekly boundary (pinned UTC week)
-
-OpenAI does not document Codex's exact weekly reset anchor, so this guard pins
-**Monday 00:00 UTC** for both tools' weekly windows. It is deterministic
-across machines and timezones; the worst case is a week that rolls a few days
-away from OpenAI's. Codex also stamps its own weekly telemetry onto token
-events; `llm-budget status` shows OpenAI's reported percent + reset time next
-to ours so you can cross-check, but the configured denominator stays the gate.
-
-### Claude Code enforcement
-
-Claude Code hooks support blocking natively:
-
-```sh
-npm run build
-llm-budget claude install               # registers UserPromptSubmit + PreToolUse in ~/.claude/settings.json
-llm-budget claude uninstall
-```
-
-Every prompt and tool call re-reads transcripts and blocks once either gate
-trips — the weekly cap or the rolling 5-hour window. The block protocol is
-deliberately single-channel: a human-readable reason on **stderr** plus exit
-code 2, which every Claude Code hook type honors (mixing in stdout JSON is
-ambiguous across client versions). Fail-closed: broken config, unreadable hook
-input, or unreadable state blocks with the session id and escape hatches
-printed. Restart running sessions after install.
-
-`Stop` is deliberately not hooked: it fires after the response is already
-billed, and blocking it would only make Claude keep working.
-
-### Codex enforcement
-
-Codex has no deny hooks, so enforcement is layered, and honestly partial:
-
-```sh
-llm-budget codex install                # writes ~/.llm-budget/bin/codex shim
-export PATH="$HOME/.llm-budget/bin:$PATH"   # put it in your shell profile
-llm-budget watchdog                     # sidecar poller (default interval 15s)
-```
-
-- **Shim**: installed as a `codex` entrypoint; consults the guard, then execs
-  the real binary. Gates *starting* Codex.
-- **Watchdog**: re-evaluates every few seconds and SIGTERMs codex processes
-  on **every poll** while the weekly cap remains exceeded — so a process that
-  started later through an absolute path (bypassing the shim) or shrugged off
-  the first SIGTERM is still caught. The desktop notification fires only on
-  the trip transition, not each tick. Kills re-arm automatically when usage
-  recovers (reset / override).
-- Optional instead of the poller: register `notify` in `~/.codex/config.toml`
-  to run `llm-budget codex-guard` after each turn.
-
-**Known gaps:** a single long-running turn can overshoot between watchdog
-ticks; anything that bypasses the shim (absolute paths, shell aliases made
-before install) skips the startup gate entirely; the watchdog kills by process
-matching, which could in principle miss renamed binaries. If you need hard
-guarantees, keep the percentage conservative.
-
-### Commands
-
-| Command | |
-|---|---|
-| `llm-budget status` | per-tool window usage, thresholds, OpenAI's own Codex telemetry, Cursor Agent section |
-| `llm-budget override <duration>` | temporarily bypass Claude + Codex gates (e.g. `30m`) |
-| `llm-budget override off` | clear the Claude + Codex override |
-| `llm-budget except add <session-id>` | exempt a session from counting and gating |
-| `llm-budget except remove <session-id>` | remove a session exception |
-| `llm-budget except list` | list session exceptions |
-| `llm-budget history` | recent recorded token events |
-| `llm-budget import-rates <source-file>` | build `~/.llm-budget/rates.json` from a models.dev catalog (e.g. token-tracker's `pricing-cache.json`) |
-| `llm-budget claude install` | manage Claude Code hook registration |
-| `llm-budget claude uninstall` | remove Claude Code hook registration |
+| `llm-budget` / `status` / `usage` | all three agents |
+| `llm-budget claude install` | register Claude Code hooks |
+| `llm-budget claude uninstall` | remove Claude Code hooks |
 | `llm-budget codex install` | install the Codex PATH shim |
 | `llm-budget codex uninstall` | remove the Codex PATH shim |
+| `llm-budget cursor install` | register Cursor Agent hooks |
+| `llm-budget cursor uninstall [--purge-data]` | remove Cursor Agent hooks |
 | `llm-budget watchdog [--interval <duration>] [--once]` | stop running Codex sessions on trip |
-| `llm-budget config` | print resolved configuration |
 
-State lives in `~/.llm-budget/` (config, SQLite event store, rates) for the
-claude and codex scopes; the cursor scope keeps its own state in
-`~/.cursor/llm-budget/`. Override and exceptions are scoped per store —
-`llm-budget override` unblocks claude+codex, `llm-budget cursor override`
-unblocks Cursor — so unblocking one tool never silently unblocks another.
+Claude Code and Codex share `~/.llm-budget/`. Cursor Agent uses the same
+verbs under `llm-budget cursor ...` because its dashboard state lives in
+`~/.cursor/llm-budget/`.
+
+| Claude Code + Codex | Cursor Agent | |
+|---|---|---|
+| `llm-budget override <duration>` | `llm-budget cursor override <duration>` | temporarily bypass gates |
+| `llm-budget override off` | `llm-budget cursor override off` | clear the override |
+| `llm-budget except add <session-id>` | `llm-budget cursor except add <session-id>` | exempt a session |
+| `llm-budget except remove <session-id>` | `llm-budget cursor except remove <session-id>` | remove an exception |
+| `llm-budget except list` | `llm-budget cursor except list` | list exceptions |
+| `llm-budget config` | `llm-budget cursor config` | print resolved configuration |
+| | `llm-budget cursor status` | dashboard usage, thresholds, credential expiry |
+| | `llm-budget cursor spending` | raw period usage from the API as JSON |
+| | `llm-budget cursor history` | recorded local events |
 
 ## Development
 

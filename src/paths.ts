@@ -11,7 +11,7 @@ export function cliAuthPath(home = homedir()): string {
 }
 
 export function configPath(home = homedir()): string {
-  return join(budgetDir(home), "config.json");
+  return join(budgetDir(home), "config.jsonc");
 }
 
 export function dbPath(home = homedir()): string {

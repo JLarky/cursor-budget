@@ -1,17 +1,17 @@
 {
   "name": "llm-budget",
   "version": "0.1.0",
-  "description": "Usage guards for Cursor Agent, Claude Code, and Codex — real reported usage, not estimates.",
+  "description": "Usage guards for Claude Code, Codex, and Cursor Agent — real reported usage, not estimates.",
   "license": "MIT",
   "keywords": [
-    "cursor-agent",
-    "claude-code",
-    "codex",
-    "hooks",
+    "llm",
     "budget",
     "quota",
-    "llm",
-    "usage"
+    "usage",
+    "hooks",
+    "claude-code",
+    "codex",
+    "cursor-agent"
   ],
   "type": "module",
   "bin": {
@@ -25,7 +25,6 @@
     "node": ">=22.5.0"
   },
   "dependencies": {
-    "@getpaseo/client": "^0.5.2",
     "valibot": "^1.4.2"
   },
   "devDependencies": {

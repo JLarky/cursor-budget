@@ -6,8 +6,9 @@ import { llmDbPath } from "./paths.js";
 export type { DatabaseSync };
 
 /**
- * Key/value state only — override deadlines live here. Usage percentages are
- * read live from the Paseo daemon; nothing token-shaped is stored anymore.
+ * Key/value state only — override deadlines and a short usage-API cache
+ * live here. Percentages are read from the vendor APIs; nothing token-shaped
+ * is stored.
  */
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS app_state (

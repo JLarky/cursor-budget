@@ -83,7 +83,7 @@ export function evaluate(input: {
   } else if (input.config.enforcement.failClosed) {
     reasons.push({
       window: "usageUnknown",
-      windowLabel: "Cursor usage",
+      windowLabel: "Usage",
       metric: "usageUnknown",
       detail: input.usageUnknownReason ?? "usage could not be determined",
     });
@@ -170,7 +170,7 @@ export function formatBlockMessage(
 
   if (primary) {
     if (primary.metric === "usageUnknown") {
-      lines.push("Cursor usage could not be determined:");
+      lines.push("Usage could not be determined:");
       lines.push(`  ${primary.detail ?? "unknown"}`);
       lines.push("");
       lines.push("Blocked because enforcement.failClosed is on (the default).");
