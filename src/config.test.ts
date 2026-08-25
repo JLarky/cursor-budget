@@ -8,10 +8,10 @@ import {
   DEFAULT_CONFIG,
   ensureConfig,
   parseConfig,
-  serializeConfig,
   writeConfig,
 } from "./config.js";
 import { configPath } from "./paths.js";
+import { stripJsoncComments } from "./jsonc.js";
 
 test("empty object uses defaults", () => {
   const config = parseConfig({});
@@ -111,24 +111,20 @@ test("ensureConfig errors include config path and recovery hint", () => {
   }
 });
 
-test("serializeConfig omits defaults", () => {
-  const config = structuredClone(DEFAULT_CONFIG);
-  config.quota.cursorModelsBlockAtPercent = 80;
-  config.excludeConversationIds = ["abc"];
-  const file = serializeConfig(config);
-  assert.deepEqual(file.quota, { cursorModelsBlockAtPercent: 80 });
-  assert.deepEqual(file.excludeConversationIds, ["abc"]);
-  assert.equal("rateLimit" in file, false);
-});
 
-test("writeConfig stays compact after except-style mutation", () => {
+test("writeConfig keeps the documented template after mutation", () => {
   const home = mkdtempSync(join(tmpdir(), "cursor-budget-write-"));
   try {
     const config = ensureConfig(home);
     config.excludeConversationIds = ["sess-1"];
     writeConfig(config, home);
-    const raw = JSON.parse(readFileSync(configPath(home), "utf8")) as Record<string, unknown>;
-    assert.deepEqual(raw, { excludeConversationIds: ["sess-1"] });
+    // The rewritten file is still the full documented template and parses
+    // back to exactly the written config.
+    const text = readFileSync(configPath(home), "utf8");
+    assert.match(text, /llm-budget Cursor Agent guard configuration/);
+    assert.match(text, /"excludeConversationIds": \["sess-1"\]/);
+    const reparsed = parseConfig(JSON.parse(stripJsoncComments(text)));
+    assert.deepEqual(reparsed.excludeConversationIds, ["sess-1"]);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

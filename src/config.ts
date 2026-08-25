@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { parseJsonc } from "./jsonc.js";
 import { dirname } from "node:path";
 import * as v from "valibot";
 import { budgetDir, configPath } from "./paths.js";
@@ -128,7 +129,7 @@ export function parseConfig(raw: unknown): Config {
     parsed = v.parse(ConfigFileSchema, raw);
   } catch (error) {
     if (error instanceof v.ValiError) {
-      throw new ConfigError(`Invalid config.json:\n${v.summarize(error.issues)}`);
+      throw new ConfigError(`Invalid config.jsonc:\n${v.summarize(error.issues)}`);
     }
     throw error;
   }
@@ -160,13 +161,51 @@ export function parseConfig(raw: unknown): Config {
   };
 }
 
+/**
+ * Render a fully-documented config.jsonc so the file doubles as schema docs.
+ * Every supported field appears with its current value and an explanation.
+ */
+export function renderConfigFile(c: Config): string {
+  const warnings = c.warnings.map((w) => `${w}`).join(", ");
+  return `// llm-budget Cursor Agent guard configuration \u2014 JSONC, so comments and
+// trailing commas are fine. Every field is listed with its current value;
+// delete a field to fall back to its noted default.
+{
+  "quota": {
+    // Block when the dashboard "Cursor Models" meter reaches this % (0-100).
+    "cursorModelsBlockAtPercent": ${c.quota.cursorModelsBlockAtPercent},
+    // Block when the dashboard "Other Models" meter reaches this % (0-100).
+    "otherModelsBlockAtPercent": ${c.quota.otherModelsBlockAtPercent},
+    // Optional block on the combined "total" meter; null disables.
+    "totalBlockAtPercent": ${c.quota.totalBlockAtPercent === null ? "null" : c.quota.totalBlockAtPercent},
+    // Beyond this age (ms) a cached snapshot is treated as unknown usage.
+    "maxStaleMs": ${c.quota.maxStaleMs},
+    // Soft TTL (ms) for the local snapshot cache before a network refresh.
+    "cacheTtlMs": ${c.quota.cacheTtlMs}
+  },
+  "rateLimit": {
+    // Runaway-loop backstop: max hook events per rolling hour; null disables.
+    "maxEventsPerHour": ${c.rateLimit.maxEventsPerHour === null ? "null" : c.rateLimit.maxEventsPerHour}
+  },
+  // Warning fractions (0-1) of each quota block threshold.
+  "warnings": [${warnings}],
+  "enforcement": {
+    // When usage cannot be determined, block instead of allow.
+    "failClosed": ${c.enforcement.failClosed}
+  },
+  // Conversation ids that bypass every gate.
+  "excludeConversationIds": [${c.excludeConversationIds.map((id) => JSON.stringify(id)).join(", ")}]
+}
+`;
+}
+
 export function ensureConfig(home?: string): Config {
   const path = configPath(home);
   mkdirSync(dirname(path), { recursive: true });
   mkdirSync(budgetDir(home), { recursive: true });
   if (!existsSync(path)) {
-    // Keep the on-disk file minimal; defaults live in code.
-    writeFileSync(path, "{}\n");
+    // First run: a fully-documented file teaches the schema.
+    writeFileSync(path, renderConfigFile(DEFAULT_CONFIG));
     return structuredClone(DEFAULT_CONFIG);
   }
   const text = readFileSync(path, "utf8");
@@ -175,10 +214,10 @@ export function ensureConfig(home?: string): Config {
   }
   let raw: unknown;
   try {
-    raw = JSON.parse(text);
+    raw = parseJsonc(text);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    throw withConfigPath(path, `Invalid config.json (not JSON): ${detail}`);
+    throw withConfigPath(path, `Invalid config.jsonc (not JSONC): ${detail}`);
   }
   try {
     return parseConfig(raw);
@@ -203,48 +242,10 @@ export function loadConfigForRead(home?: string): { config: Config; warning?: st
   }
 }
 
-/** Persist only overrides so defaults stay code-owned. */
-export function serializeConfig(config: Config): Record<string, unknown> {
-  const validated = parseConfig(config);
-  const file: Record<string, unknown> = {};
-
-  const quota: Record<string, unknown> = {};
-  for (const key of [
-    "cursorModelsBlockAtPercent",
-    "otherModelsBlockAtPercent",
-    "totalBlockAtPercent",
-    "maxStaleMs",
-    "cacheTtlMs",
-  ] as const) {
-    if (validated.quota[key] !== DEFAULT_CONFIG.quota[key]) {
-      quota[key] = validated.quota[key];
-    }
-  }
-  if (Object.keys(quota).length > 0) {
-    file.quota = quota;
-  }
-
-  if (validated.rateLimit.maxEventsPerHour !== DEFAULT_CONFIG.rateLimit.maxEventsPerHour) {
-    file.rateLimit = { maxEventsPerHour: validated.rateLimit.maxEventsPerHour };
-  }
-
-  if (JSON.stringify(validated.warnings) !== JSON.stringify(DEFAULT_CONFIG.warnings)) {
-    file.warnings = validated.warnings;
-  }
-
-  if (validated.enforcement.failClosed !== DEFAULT_CONFIG.enforcement.failClosed) {
-    file.enforcement = { failClosed: validated.enforcement.failClosed };
-  }
-
-  if (validated.excludeConversationIds.length > 0) {
-    file.excludeConversationIds = validated.excludeConversationIds;
-  }
-
-  return file;
-}
-
+/** Persist a fully-resolved config in documented template form. */
 export function writeConfig(config: Config, home?: string): void {
   const path = configPath(home);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(serializeConfig(config), null, 2)}\n`);
+  const validated = parseConfig(config);
+  writeFileSync(path, renderConfigFile(validated));
 }

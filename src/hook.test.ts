@@ -68,12 +68,12 @@ function fakeResult(
   };
 }
 
-test("invalid config.json denies enforce events instead of failing open", async () => {
+test("invalid config.jsonc denies enforce events instead of failing open", async () => {
   const home = mkdtempSync(join(tmpdir(), "cursor-budget-hook-"));
   try {
     mkdirSync(join(home, ".cursor", "llm-budget"), { recursive: true });
     writeFileSync(
-      join(home, ".cursor", "llm-budget", "config.json"),
+      join(home, ".cursor", "llm-budget", "config.jsonc"),
       `${JSON.stringify({
         quota: { cursorModelsBlockAtPercent: "ninety" },
       })}\n`,
@@ -95,11 +95,11 @@ test("invalid config.json denies enforce events instead of failing open", async 
   }
 });
 
-test("invalid config.json still allows non-enforce record events", async () => {
+test("invalid config.jsonc still allows non-enforce record events", async () => {
   const home = mkdtempSync(join(tmpdir(), "cursor-budget-hook-rec-"));
   try {
     mkdirSync(join(home, ".cursor", "llm-budget"), { recursive: true });
-    writeFileSync(join(home, ".cursor", "llm-budget", "config.json"), "{not-json");
+    writeFileSync(join(home, ".cursor", "llm-budget", "config.jsonc"), "{not-json");
     const response = await handleHook(
       {
         hook_event_name: "afterAgentThought",

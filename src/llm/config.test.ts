@@ -4,10 +4,10 @@ import {
   DEFAULT_CONFIG,
   LlmConfigError,
   ensureLlmConfig,
-  parseJsonc,
   parseLlmConfig,
   renderLlmConfigFile,
 } from "./config.js";
+import { parseJsonc } from "../jsonc.js";
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
