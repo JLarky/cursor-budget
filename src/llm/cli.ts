@@ -42,6 +42,12 @@ import { spendingCommand as cursorSpendingCommand } from "../commands/spending.j
 import { handleHook, readStdinJson } from "../hook.js";
 
 async function main(): Promise<void> {
+  // Piping into `head` and friends closes stdout early; exit quietly on EPIPE
+  // instead of dumping an unhandled-error stack after the user got their data.
+  process.stdout.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EPIPE") process.exit(0);
+    throw err;
+  });
   const [command, ...rest] = process.argv.slice(2);
   switch (command) {
     case "cursor":
@@ -63,7 +69,14 @@ async function main(): Promise<void> {
         respondToClaudeHook(event);
         return;
       }
-      throw new Error("Usage: llm-budget claude install | claude uninstall");
+      if (sub === undefined || sub === "-h" || sub === "--help" || sub === "help") {
+        process.stdout.write(CLAUDE_SCOPE_HELP);
+        return;
+      }
+      throw new Error(
+        "Unknown command: llm-budget claude " + sub +
+          "\nRun \`llm-budget claude help\`.",
+      );
     }
     case "codex": {
       const sub = rest[0];
@@ -75,7 +88,14 @@ async function main(): Promise<void> {
         process.stdout.write(uninstallCodexShim());
         return;
       }
-      throw new Error("Usage: llm-budget codex install | codex uninstall");
+      if (sub === undefined || sub === "-h" || sub === "--help" || sub === "help") {
+        process.stdout.write(CODEX_SCOPE_HELP);
+        return;
+      }
+      throw new Error(
+        "Unknown command: llm-budget codex " + sub +
+          "\nRun \`llm-budget codex help\`.",
+      );
     }
     case "watchdog": {
       const once = rest.includes("--once");
@@ -99,7 +119,8 @@ async function main(): Promise<void> {
       return;
     }
     case "status":
-      process.stdout.write(statusCommand());
+    case "usage":
+      process.stdout.write(await statusCommand());
       return;
     case "override":
       process.stdout.write(overrideCommand(rest[0]));
@@ -118,14 +139,21 @@ async function main(): Promise<void> {
     }
     case "import-rates": {
       const src = rest[0];
-      if (!src) throw new Error("Usage: llm-budget import-rates <pricing-cache.json|api.json>");
+      if (!src) throw new Error("Usage: llm-budget import-rates <source-file>");
       process.stdout.write(importRatesCommand(src));
       return;
     }
+    case undefined:
+      // No arguments: show the live budget view up front; the help wall is
+      // one keystroke away.
+      process.stdout.write(await statusCommand());
+      process.stdout.write(
+        "\nRun \`llm-budget help\` for all commands and scopes.\n",
+      );
+      return;
     case "-h":
     case "--help":
     case "help":
-    case undefined:
       process.stdout.write(HELP);
       return;
     default:
@@ -216,52 +244,73 @@ Usage:
   llm-budget cursor status
   llm-budget cursor spending
   llm-budget cursor config
-  llm-budget cursor override 15m|30m|1h|off
+  llm-budget cursor override <duration>
+  llm-budget cursor override off
   llm-budget cursor except add <session-id>
   llm-budget cursor except remove <session-id>
   llm-budget cursor except list
   llm-budget cursor history
   llm-budget cursor install
   llm-budget cursor uninstall [--purge-data]
-  llm-budget cursor hook            # used by the installed hooks
+  llm-budget cursor hook                # Used by the installed hooks
 
 Primary gate uses Cursor dashboard period usage (Cursor Models / Other Models).
 Backstop is a local rolling-hour event count.
 `;
 
-const HELP = `llm-budget — usage guards for Cursor Agent, Claude Code, and Codex
+const CLAUDE_SCOPE_HELP = `llm-budget claude \u2014 Claude Code guard
+
+Commands:
+  llm-budget claude install     Register UserPromptSubmit + PreToolUse hooks
+                                in ~/.claude/settings.json
+  llm-budget claude uninstall   Remove those hooks
+  llm-budget claude help        This text
+`;
+
+const CODEX_SCOPE_HELP = `llm-budget codex \u2014 Codex guard
+
+Commands:
+  llm-budget codex install      Install the PATH shim that wraps the codex binary
+  llm-budget codex uninstall    Remove the PATH shim
+  llm-budget codex help         This text
+
+Pair with the sidecar enforcer:
+  llm-budget watchdog [--interval <duration>] [--once]
+`;
+
+const HELP = `llm-budget \u2014 usage guards for Claude Code, Codex, and Cursor Agent
 
 Usage:
-  llm-budget status                     # Claude Code + Codex windows
-  llm-budget override 15m|30m|1h|off
+  llm-budget                    Live budget view for all three agents
+  llm-budget status | usage     Same as the bare invocation
+  llm-budget help               This text
+
+Scopes \u2014 every agent supports: install | uninstall | help
+  llm-budget claude help        Claude Code \u2014 native hooks in ~/.claude/settings.json
+  llm-budget codex help         Codex CLI \u2014 PATH shim + sidecar watchdog
+  llm-budget cursor help        Cursor Agent \u2014 dashboard API + ~/.cursor/hooks.json
+
+Shared budget commands (Claude Code and Codex):
+  llm-budget override <duration>       Temporarily bypass the gates
+  llm-budget override off              Clear the override
   llm-budget except add <session-id>
   llm-budget except remove <session-id>
   llm-budget except list
   llm-budget history
   llm-budget config
-  llm-budget import-rates <models-dev-cache.json>
-  llm-budget claude install | claude uninstall
-  llm-budget codex install | codex uninstall
-  llm-budget watchdog [--interval 15s] [--once]
-  llm-budget cursor <command>           # Cursor Agent guard (see: cursor help)
-
-Scopes:
-  claude  install/uninstall native Claude Code hooks (UserPromptSubmit, PreToolUse)
-  codex   install/uninstall the PATH shim; pair with watchdog
-  cursor  the original dashboard-API guard for Cursor Agent
+  llm-budget import-rates <source-file>
 
 Weekly caps use a pinned UTC week (Monday 00:00). Percentages are against the
 budget denominator configured in ~/.llm-budget/config.json.
 `;
 
-function statusCommand(home = homedir()): string {
+async function statusCommand(home = homedir()): Promise<string> {
   const { config, warning } = loadLlmConfigForRead(home);
   const db = openLlmDb(home);
   const now = new Date();
   const rates = loadRates(config.budget.rates, home);
-  const lines: string[] = ["llm-budget", ""];
+  const lines: string[] = ["llm-budget"];
   if (warning) lines.push(warning, "");
-  lines.push(`Denominator: ${denominatorDisplay(config.budget.denominator)}`);
 
   for (const agent of ["claude", "codex"] as const) {
     const enabled = agent === "claude" ? config.claudeCode.enabled : config.codex.enabled;
@@ -271,6 +320,9 @@ function statusCommand(home = homedir()): string {
       lines.push("  disabled in config");
       continue;
     }
+
+    // Each agent block is self-contained: budget, windows, escape hatches.
+    lines.push(`  Denominator: ${denominatorDisplay(config.budget.denominator)}`);
 
     // Refresh from transcripts before displaying (same scan the guard runs).
     try {
@@ -318,15 +370,46 @@ function statusCommand(home = homedir()): string {
         }
       }
     }
+
+    // Per-agent escape hatches: claude+codex share one store; cursor has its
+    // own (rendered inside its block below).
+    const overrideRaw = getState(db, "override_until");
+    lines.push(`  Override: ${overrideRaw ? `until ${overrideRaw}` : "none"}`);
+    lines.push(
+      `  Exceptions: ${config.excludeSessionIds.length > 0 ? config.excludeSessionIds.join(", ") : "none"}`,
+    );
+    lines.push("  On unknown usage: block (failClosed)");
   }
 
-  const overrideRaw = getState(db, "override_until");
+  // Cursor Agent rides in the same status view so one command covers all
+  // three guards. Its dashboard state lives in ~/.cursor/llm-budget and may
+  // be unavailable offline — render whatever it reports, indented.
   lines.push("");
-  lines.push(`Override: ${overrideRaw ? `until ${overrideRaw}` : "none"}`);
-  lines.push(
-    `Exceptions: ${config.excludeSessionIds.length > 0 ? config.excludeSessionIds.join(", ") : "none"}`,
-  );
-  lines.push("On unknown usage: block (failClosed)");
+  lines.push("Cursor Agent:");
+  try {
+    const raw = await cursorStatusCommand(home);
+    const allLines = raw.split("\n");
+    const titleIdx = allLines.findIndex((l) => l.trim() === "llm-budget");
+    const body = (titleIdx >= 0 ? allLines.slice(titleIdx + 1) : allLines)
+      .map((l) => {
+        // Collapse multi-line API/auth failure detail into one peer-style line
+        // so an offline Cursor does not visually dominate the output.
+        const m = l.match(/^\s*Period usage: unavailable \(([^)]*)\)\s*$/);
+        if (!m) return l;
+        const reason = m[1].split(":")[0].trim();
+        return "Dashboard quota: unavailable — sign in with cursor-agent";
+      })
+      .filter((l) => l.trim() !== "");
+    if (body.length === 0) {
+      lines.push("  no status available");
+    } else {
+      for (const l of body) lines.push(`  ${l}`);
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message.split(":")[0] : String(error);
+    lines.push(`  Dashboard quota: unavailable (${detail}) — sign in with cursor-agent`);
+  }
+
   return `${lines.join("\n")}\n`;
 }
 

@@ -21,3 +21,19 @@ test("codex-guard allows silently under a valid config", async () => {
   assert.equal(result.code, 0);
   assert.equal(result.stdout, "");
 });
+
+test("status covers all three agents", { timeout: 60_000 }, async () => {
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-cli3-"));
+  const result = await runCli(["status"], home);
+  assert.equal(result.code, 0);
+  // `usage` is an alias of `status` and renders the same view.
+  const alias = await runCli(["usage"], home);
+  assert.equal(alias.code, 0);
+  assert.match(alias.stdout, /Cursor Agent:/);
+  assert.match(result.stdout, /Claude Code:/);
+  assert.match(result.stdout, /Codex:/);
+  assert.match(result.stdout, /Cursor Agent:/);
+  // Every agent block carries its own escape-hatch state.
+  assert.equal(result.stdout.split("Override:").length - 1 >= 3, true);
+  assert.doesNotMatch(result.stdout, /\(claude\+codex\)/);
+});

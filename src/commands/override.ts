@@ -11,7 +11,9 @@ export function overrideCommand(spec: string | undefined): string {
   }
   const ms = parseDuration(spec);
   if (ms == null) {
-    throw new Error("Override duration must look like 15m, 30m, 1h, or off");
+    throw new Error(
+      "Usage:\n  llm-budget cursor override <duration>   (e.g. 15m, 30m, 1h)\n  llm-budget cursor override off",
+    );
   }
   const until = new Date(Date.now() + ms);
   setState(db, "override_until", until.toISOString());
