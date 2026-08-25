@@ -78,6 +78,13 @@ test("rejects string quota values", () => {
   );
 });
 
+test("rejects a string Claude Code threshold instead of treating it as unknown", () => {
+  assert.throws(
+    () => parseConfig({ claudeCode: { weeklyBlockAtPercent: "24" } }),
+    ConfigError,
+  );
+});
+
 test("rejects unknown nested keys", () => {
   assert.throws(
     () =>

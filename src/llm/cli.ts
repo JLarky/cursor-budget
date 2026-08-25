@@ -8,14 +8,14 @@ import {
   readClaudeHookEvent,
   type ClaudeHookEvent,
 } from "./claude-hook.js";
-import { installClaudeHooks, uninstallClaudeHooks } from "./claude-install.js";
+import { installClaudeHooks, uninstallClaudeHooks, claudeHooksInstalled } from "./claude-install.js";
 import {
   ensureLlmConfig,
   formatSharedConfigFile,
   loadLlmConfigForRead,
   writeLlmConfig,
 } from "./config.js";
-import { installCodexShim, uninstallCodexShim } from "./codex-shim.js";
+import { installCodexShim, uninstallCodexShim, codexShimInstalled } from "./codex-shim.js";
 import { runWatchdog } from "./codex-watchdog.js";
 import { getState, openLlmDb, setState } from "./db.js";
 import { runGuard } from "./guard.js";
@@ -27,7 +27,7 @@ import {
 // Cursor Agent scope — dashboard API; config lives in ~/.config/llm-budget with the other agents.
 import { exceptCommand as cursorExceptCommand } from "../commands/except.js";
 import { historyCommand as cursorHistoryCommand } from "../commands/history.js";
-import { installCommand as cursorInstallCommand } from "../commands/install.js";
+import { installCommand as cursorInstallCommand, cursorHooksInstalled } from "../commands/install.js";
 import { overrideCommand as cursorOverrideCommand } from "../commands/override.js";
 import { statusCommand as cursorStatusCommand } from "../commands/status.js";
 import { uninstallCommand as cursorUninstallCommand } from "../commands/uninstall.js";
@@ -110,6 +110,10 @@ async function main(): Promise<void> {
         );
         process.exit(2);
       }
+      return;
+    }
+    case "install": {
+      process.stdout.write(installAll());
       return;
     }
     case "status":
@@ -267,6 +271,7 @@ const HELP = `llm-budget \u2014 percent-based guards for Claude Code, Codex, and
 Usage:
   llm-budget                    Live status view for all three agents
   llm-budget status | usage     Same as the bare invocation
+  llm-budget install            Register Claude, Codex, and Cursor guards
   llm-budget help               This text
 
 Scopes \u2014 every agent supports: install | uninstall | help
@@ -310,6 +315,11 @@ async function statusCommand(home = homedir()): Promise<string> {
     const enabled = agent === "claude" ? config.claudeCode.enabled : config.codex.enabled;
     lines.push("");
     lines.push(agent === "claude" ? "Claude Code:" : "Codex:");
+    if (agent === "claude") {
+      lines.push(`  Hooks: ${formatInstallState(claudeHooksInstalled(home))}`);
+    } else {
+      lines.push(`  Shim: ${formatInstallState(codexShimInstalled(home))}`);
+    }
     if (!enabled) {
       lines.push("  disabled in config");
       continue;
@@ -361,6 +371,7 @@ async function statusCommand(home = homedir()): Promise<string> {
   // Dashboard auth may be unavailable offline — render whatever it reports.
   lines.push("");
   lines.push("Cursor Agent:");
+  lines.push(`  Hooks: ${formatInstallState(cursorHooksInstalled(home))}`);
   try {
     const raw = await cursorStatusCommand(home);
     const allLines = raw.split("\n");
@@ -438,6 +449,15 @@ function exceptCommand(args: string[], home = homedir()): string {
 function formatList(ids: string[]): string {
   if (ids.length === 0) return "No session exceptions.\n";
   return `Session exceptions (${ids.length}):\n${ids.map((id) => `  ${id}`).join("\n")}\n`;
+}
+
+function formatInstallState(installed: boolean): string {
+  return installed ? "installed" : "not installed — run llm-budget install";
+}
+
+function installAll(home = homedir()): string {
+  const sections = [installClaudeHooks(home), installCodexShim(home), cursorInstallCommand(home)];
+  return `${sections.map((section) => section.trimEnd()).join("\n\n")}\n`;
 }
 
 main().catch((error) => {

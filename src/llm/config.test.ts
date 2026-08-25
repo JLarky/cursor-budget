@@ -45,6 +45,10 @@ test("invalid values are rejected with a clear error", () => {
   // Unknown keys stay rejected (strict schema).
   assert.throws(() => parseLlmConfig({ budget: { denominator: {} } }), LlmConfigError);
   assert.doesNotThrow(() => parseLlmConfig({ quota: {}, cursor: { quota: {} } }));
+  assert.throws(
+    () => parseLlmConfig({ cursor: { quota: { cursorModelsBlockAtPercent: 101 } } }),
+    LlmConfigError,
+  );
 });
 
 test("jsonc: comments and trailing commas parse", () => {
