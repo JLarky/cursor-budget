@@ -15,6 +15,7 @@ test("defaults: both guards on at 80%, token denominator", () => {
   assert.equal(config.claudeCode.rolling5hBlockAtPercent, 80);
   assert.equal(config.claudeCode.rollingWindowMs, DEFAULT_CONFIG.claudeCode.rollingWindowMs);
   assert.equal(config.codex.weeklyBlockAtPercent, 80);
+  assert.equal(config.codex.openAiWeeklyBlockAtPercent, null);
   assert.equal(config.enforcement.failClosed, true);
 });
 
@@ -42,6 +43,17 @@ test("invalid denominators are rejected with a clear error", () => {
 
 test("unknown keys are rejected (strict schema)", () => {
   assert.throws(() => parseLlmConfig({ quota: {} }), LlmConfigError);
+});
+
+test("codex OpenAI weekly percent gate parses and serializes only when set", () => {
+  const customized = parseLlmConfig({ codex: { openAiWeeklyBlockAtPercent: 3 } });
+  assert.equal(customized.codex.openAiWeeklyBlockAtPercent, 3);
+  const file = serializeLlmConfig(customized) as Record<string, any>;
+  assert.deepEqual(file.codex, { openAiWeeklyBlockAtPercent: 3 });
+  assert.deepEqual(parseLlmConfig(file), customized);
+
+  // Out-of-range values are rejected like every other percent.
+  assert.throws(() => parseLlmConfig({ codex: { openAiWeeklyBlockAtPercent: -1 } }), LlmConfigError);
 });
 
 test("serialize keeps only overrides; round-trip is stable", () => {

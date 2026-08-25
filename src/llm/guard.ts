@@ -9,6 +9,7 @@ import { getState, openLlmDb } from "./db.js";
 import {
   formatBudgetBlockMessage,
   evaluateBudget,
+  formatPercent,
   type BudgetEvaluation,
 } from "./budget/evaluator.js";
 import { loadRates } from "./pricing.js";
@@ -121,6 +122,10 @@ export function runGuard(
   // pricing entirely.
   const built = buildMeasurements(agent, config, db, rates, now);
 
+  if (usageUnknownReason === null && built.usageUnknownReason) {
+    usageUnknownReason = built.usageUnknownReason;
+  }
+
   // A USD denominator with unpriced models means measured spend is missing
   // money, not zero money — same fail-closed treatment as unknown usage.
   if (
@@ -157,7 +162,7 @@ function buildMeasurements(
   db: ReturnType<typeof openLlmDb>,
   rates: Parameters<typeof windowUsage>[4],
   now: Date,
-): { measurements: WindowMeasurement[]; unpricedModels: string[] } {
+): { measurements: WindowMeasurement[]; unpricedModels: string[]; usageUnknownReason?: string | null } {
   const denom = config.budget.denominator;
   const denomLabel = denominatorAmount(denom);
   const weekFrom = utcWeekStart(now);
@@ -190,6 +195,41 @@ function buildMeasurements(
         },
       ],
       unpricedModels: [...new Set([...weeklyUsage.unpricedModels, ...rollingUsage.unpricedModels])],
+    };
+  }
+
+  if (config.codex.openAiWeeklyBlockAtPercent !== null) {
+    // Percent gate against OpenAI's own reported weekly limit: no token math
+    // and no pricing. Missing telemetry is unknown usage (fail closed).
+    const raw = getState(db, "codex_openai_rate_limits");
+    let info: { usedPercent?: unknown } | undefined;
+    if (raw) {
+      try {
+        info = JSON.parse(raw) as { usedPercent?: unknown };
+      } catch {
+        info = undefined;
+      }
+    }
+    const usedPct =
+      typeof info?.usedPercent === "number" && Number.isFinite(info.usedPercent)
+        ? info.usedPercent
+        : Number.NaN;
+    return {
+      measurements: [
+        {
+          windowId: "codexWeekly",
+          label: "Weekly (OpenAI)",
+          usedPct,
+          blockAtPct: config.codex.openAiWeeklyBlockAtPercent,
+          usedDisplay: Number.isFinite(usedPct) ? formatPercent(usedPct) : "unknown",
+          denomDisplay: "OpenAI weekly limit",
+        },
+      ],
+      unpricedModels: [],
+      usageUnknownReason:
+        Number.isFinite(usedPct)
+          ? null
+          : "OpenAI weekly rate-limit telemetry not found yet — run codex once so it records rate limits in its transcript",
     };
   }
 

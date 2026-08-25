@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG, type LlmConfig } from "./config.js";
-import { openLlmDb } from "./db.js";
+import { openLlmDb, setState } from "./db.js";
 import { runGuard } from "./guard.js";
 import type { ScanStats } from "./transcripts/scanner.js";
 
@@ -134,4 +134,37 @@ test("USD denominator with unpriced models fails closed", () => {
     { home, now: new Date(), scan: () => ({ ...ZERO }) },
   );
   assert.equal(priced.allow, true);
+});
+
+test("codex OpenAI-percent gate: below threshold allows, at it blocks", () => {
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-guard6-"));
+  const db = openLlmDb(home);
+  setState(
+    db,
+    "codex_openai_rate_limits",
+    JSON.stringify({ usedPercent: 2, resetsAt: "2026-08-31T16:04:13.000Z" }),
+  );
+
+  const c = config({});
+  c.codex.openAiWeeklyBlockAtPercent = 3;
+  const allowed = runGuard("codex", c, { home, now: new Date(), scan: () => ({ ...ZERO }) });
+  assert.equal(allowed.allow, true);
+
+  c.codex.openAiWeeklyBlockAtPercent = 1;
+  const denied = runGuard("codex", c, { home, now: new Date(), scan: () => ({ ...ZERO }) });
+  assert.equal(denied.allow, false);
+  const reason = denied.evaluation.reasons[0];
+  assert.equal(reason?.windowLabel, "Weekly (OpenAI)");
+  assert.equal(reason?.usedPct, 2);
+  assert.equal(reason?.blockAtPct, 1);
+});
+
+test("codex OpenAI-percent gate fails closed without telemetry", () => {
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-guard7-"));
+  const c = config({});
+  c.codex.openAiWeeklyBlockAtPercent = 50;
+  const decision = runGuard("codex", c, { home, now: new Date(), scan: () => ({ ...ZERO }) });
+  assert.equal(decision.allow, false);
+  assert.equal(decision.evaluation.reasons[0]?.windowId, "usageUnknown");
+  assert.match(decision.evaluation.reasons[0]?.detail ?? "", /OpenAI weekly rate-limit telemetry/);
 });

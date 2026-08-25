@@ -322,7 +322,11 @@ async function statusCommand(home = homedir()): Promise<string> {
     }
 
     // Each agent block is self-contained: budget, windows, escape hatches.
-    lines.push(`  Denominator: ${denominatorDisplay(config.budget.denominator)}`);
+    // In OpenAI-percent mode the token denominator plays no part in the
+    // decision, so don't advertise one.
+    if (!(agent === "codex" && config.codex.openAiWeeklyBlockAtPercent !== null)) {
+      lines.push(`  Denominator: ${denominatorDisplay(config.budget.denominator)}`);
+    }
 
     // Refresh from transcripts before displaying (same scan the guard runs).
     try {
@@ -352,21 +356,43 @@ async function statusCommand(home = homedir()): Promise<string> {
         `    ${usageLine(rollingPct, config.claudeCode.rolling5hBlockAtPercent, rolling, config.budget.denominator.kind)}`,
       );
     } else {
-      lines.push(
-        `  Weekly (pinned UTC week, resets ${nextUtcWeekStart(now).toISOString().slice(0, 10)}):`,
-        `    ${usageLine(weeklyPct, config.codex.weeklyBlockAtPercent, weekly, config.budget.denominator.kind)}`,
-      );
-      const openaiRaw = getState(db, "codex_openai_rate_limits");
-      if (openaiRaw) {
-        try {
-          const info = JSON.parse(openaiRaw) as {
-            usedPercent?: number;
-            resetsAt?: string | null;
-          };
-          const reset = info.resetsAt ? `, resets ${info.resetsAt}` : "";
-          lines.push(`  OpenAI reports ${info.usedPercent}% of its own weekly limit${reset}`);
-        } catch {
-          // Malformed cached telemetry is display-only; ignore.
+      const openaiGate = config.codex.openAiWeeklyBlockAtPercent;
+      if (openaiGate !== null) {
+        // Percent gate mode: OpenAI's own number is the whole story.
+        let openai: { usedPercent?: unknown; resetsAt?: string | null } | null = null;
+        const raw = getState(db, "codex_openai_rate_limits");
+        if (raw) {
+          try {
+            openai = JSON.parse(raw) as { usedPercent?: unknown; resetsAt?: string | null };
+          } catch {
+            openai = null;
+          }
+        }
+        const used =
+          typeof openai?.usedPercent === "number" && Number.isFinite(openai.usedPercent)
+            ? `${openai.usedPercent}%`
+            : "unknown";
+        lines.push(
+          `  Weekly (OpenAI): ${used} of ${openaiGate}% block threshold`,
+          `    Resets: ${openai?.resetsAt ?? "unknown"}`,
+        );
+      } else {
+        lines.push(
+          `  Weekly (pinned UTC week, resets ${nextUtcWeekStart(now).toISOString().slice(0, 10)}):`,
+          `    ${usageLine(weeklyPct, config.codex.weeklyBlockAtPercent, weekly, config.budget.denominator.kind)}`,
+        );
+        const openaiRaw = getState(db, "codex_openai_rate_limits");
+        if (openaiRaw) {
+          try {
+            const info = JSON.parse(openaiRaw) as {
+              usedPercent?: number;
+              resetsAt?: string | null;
+            };
+            const reset = info.resetsAt ? `, resets ${info.resetsAt}` : "";
+            lines.push(`  OpenAI reports ${info.usedPercent}% of its own weekly limit${reset}`);
+          } catch {
+            // Malformed cached telemetry is display-only; ignore.
+          }
         }
       }
     }

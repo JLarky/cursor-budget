@@ -39,6 +39,12 @@ export interface CodexConfig {
   enabled: boolean;
   /** Block at this % of the budget denominator over the pinned UTC week. */
   weeklyBlockAtPercent: number;
+  /**
+   * When set, Codex's weekly gate compares OpenAI's own reported weekly
+   * usage percent (from rate-limit telemetry in its transcripts) against
+   * this threshold instead of running the token-denominator math.
+   */
+  openAiWeeklyBlockAtPercent: number | null;
 }
 
 export interface LlmConfig {
@@ -78,6 +84,7 @@ export const DEFAULT_CONFIG: LlmConfig = {
   codex: {
     enabled: true,
     weeklyBlockAtPercent: 80,
+    openAiWeeklyBlockAtPercent: null,
   },
   warnings: [0.5, 0.75, 0.9],
   enforcement: {
@@ -121,6 +128,9 @@ const ClaudeCodeSchema = v.strictObject({
 const CodexSchema = v.strictObject({
   enabled: v.optional(v.boolean()),
   weeklyBlockAtPercent: v.optional(percent0to100),
+  // Null means "use the token-denominator gate"; the resolver stores null for
+  // an absent key, so serialized configs may carry it back explicitly.
+  openAiWeeklyBlockAtPercent: v.optional(v.nullable(percent0to100)),
 });
 
 const ConfigFileSchema = v.strictObject({
@@ -182,6 +192,7 @@ export function parseLlmConfig(raw: unknown): LlmConfig {
       enabled: parsed.codex?.enabled ?? DEFAULT_CONFIG.codex.enabled,
       weeklyBlockAtPercent:
         parsed.codex?.weeklyBlockAtPercent ?? DEFAULT_CONFIG.codex.weeklyBlockAtPercent,
+      openAiWeeklyBlockAtPercent: parsed.codex?.openAiWeeklyBlockAtPercent ?? null,
     },
     warnings: parsed.warnings ?? DEFAULT_CONFIG.warnings,
     enforcement: {
@@ -267,7 +278,7 @@ export function serializeLlmConfig(config: LlmConfig): Record<string, unknown> {
   }
 
   const codexOverrides: Record<string, unknown> = {};
-  for (const key of ["enabled", "weeklyBlockAtPercent"] as const) {
+  for (const key of ["enabled", "weeklyBlockAtPercent", "openAiWeeklyBlockAtPercent"] as const) {
     if (validated.codex[key] !== DEFAULT_CONFIG.codex[key]) {
       codexOverrides[key] = validated.codex[key];
     }
