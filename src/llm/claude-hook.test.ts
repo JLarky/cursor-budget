@@ -10,7 +10,7 @@ import {
   parseClaudeHookInput,
 } from "./claude-hook.js";
 import { DEFAULT_CONFIG, type LlmConfig } from "./config.js";
-import type { PaseoUsageSnapshot } from "./paseo.js";
+import type { UsageSnapshot } from "./usage/index.js";
 
 function baseConfig(overrides: Partial<LlmConfig["claudeCode"]> = {}): LlmConfig {
   const config = structuredClone(DEFAULT_CONFIG);
@@ -20,7 +20,7 @@ function baseConfig(overrides: Partial<LlmConfig["claudeCode"]> = {}): LlmConfig
 
 function claudeSnapshot(
   windows: Array<{ id: string; label: string; usedPct?: number | null }>,
-): () => Promise<PaseoUsageSnapshot> {
+): () => Promise<UsageSnapshot> {
   return () =>
     Promise.resolve({
       fetchedAt: "2026-08-25T00:00:00.000Z",
@@ -85,7 +85,7 @@ test("rolling 5h window blocks independently of the weekly gate", async () => {
     { fetchUsage: rollingOver, config: baseConfig() },
   );
   assert.equal(response.block, true);
-  assert.match(response.message ?? "", /Rolling 5h \(paseo\) budget reached/);
+  assert.match(response.message ?? "", /Rolling 5h budget reached/);
 
   // A tighter rolling threshold blocks where the default would not.
   const tight = baseConfig({ rolling5hBlockAtPercent: 5 });
@@ -94,7 +94,7 @@ test("rolling 5h window blocks independently of the weekly gate", async () => {
     { fetchUsage: UNDER_THRESHOLD, config: tight },
   );
   assert.equal(responseTight.block, true);
-  assert.match(responseTight.message ?? "", /Rolling 5h \(paseo\)/);
+  assert.match(responseTight.message ?? "", /Rolling 5h/);
 });
 
 test("excluded sessions bypass every gate", async () => {
@@ -140,7 +140,7 @@ test("broken config denies enforce events with a recoverable message", async () 
   assert.match(response.message ?? "", /failed to load config/);
 });
 
-test("unreachable paseo fails closed (and opens under failClosed=false)", async () => {
+test("unreachable usage API fails closed (and opens under failClosed=false)", async () => {
   const failing = () => {
     throw new Error("daemon down");
   };

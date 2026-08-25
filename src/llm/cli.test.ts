@@ -15,8 +15,19 @@ test("codex-guard fails closed when config is invalid", async () => {
   assert.match(result.stderr, /config/i);
 });
 
-test("codex-guard allows silently under a valid config", async () => {
+test("codex-guard fails closed when Codex is not signed in", async () => {
   const home = mkdtempSync(join(tmpdir(), "llm-budget-cli2-"));
+  const result = await runCli(["codex-guard"], home);
+  assert.equal(result.code, 2);
+});
+
+test("codex-guard allows when failClosed is off", async () => {
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-cli-open-"));
+  mkdirSync(join(home, ".llm-budget"), { recursive: true });
+  writeFileSync(
+    join(home, ".llm-budget", "config.jsonc"),
+    '{ "enforcement": { "failClosed": false } }\n',
+  );
   const result = await runCli(["codex-guard"], home);
   assert.equal(result.code, 0);
   assert.equal(result.stdout, "");
@@ -49,4 +60,5 @@ test("help lists three peer scopes and both override stores", async () => {
   assert.match(result.stdout, /llm-budget cursor override /);
   assert.doesNotMatch(result.stdout, /Shared commands \(Claude Code and Codex\)/);
   assert.doesNotMatch(result.stdout, /the original Cursor/);
+  assert.doesNotMatch(result.stdout, /Paseo/);
 });

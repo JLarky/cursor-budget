@@ -7,8 +7,8 @@ source of truth, never a local estimate.
 One binary, one scope per agent:
 
 ```sh
-llm-budget claude install  # Claude Code   — Paseo metering + native hooks
-llm-budget codex install   # Codex         — Paseo metering + shim + watchdog
+llm-budget claude install  # Claude Code   — Anthropic usage API + native hooks
+llm-budget codex install   # Codex         — OpenAI usage API + shim + watchdog
 llm-budget cursor install  # Cursor Agent  — dashboard API + ~/.cursor/hooks.json
 ```
 
@@ -20,8 +20,8 @@ An earlier version of this tool did, and it was wrong by roughly 12x. Hooks
 don't see the real prompt payload — system prompts, file context, cache reads
 and reasoning tokens are all invisible — so any local estimate is guessing at
 the majority of the bill. Every guard here reads numbers the provider actually
-reports: Paseo (Anthropic / OpenAI limits) for `claude` and `codex`, and the
-Cursor dashboard API for `cursor`.
+reports: Anthropic's OAuth usage API for `claude`, OpenAI's rate-limit
+telemetry for `codex`, and the Cursor dashboard API for `cursor`.
 
 ## Install
 
@@ -53,7 +53,8 @@ never silently unblocks another.
 ### Claude Code
 
 `llm-budget claude install` registers `UserPromptSubmit` + `PreToolUse` in
-`~/.claude/settings.json`. Every prompt and tool call re-checks Paseo and
+`~/.claude/settings.json`. Every prompt and tool call re-checks Anthropic's
+usage API and
 blocks once either gate trips — the weekly cap or the rolling 5-hour window.
 The block protocol is a human-readable reason on **stderr** plus exit code 2.
 Undo with `llm-budget claude uninstall`. Restart running sessions after
@@ -154,8 +155,9 @@ Only overrides are stored; defaults live in code. All keys optional.
 }
 ```
 
-Percentages come from the Paseo daemon. Each gate blocks when usage reaches
-its threshold. If Paseo is unreachable the guards block under the default
+Percentages come from the vendor usage APIs (Claude Code's local OAuth
+creds, Codex `auth.json`). Each gate blocks when usage reaches its
+threshold. If usage cannot be determined the guards block under the default
 `failClosed: true`.
 
 ### Cursor Agent — `~/.cursor/llm-budget/config.jsonc`

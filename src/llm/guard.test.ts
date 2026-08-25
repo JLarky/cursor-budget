@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DEFAULT_CONFIG, type LlmConfig } from "./config.js";
 import { runGuard } from "./guard.js";
-import type { PaseoUsageSnapshot } from "./paseo.js";
+import type { UsageSnapshot } from "./usage/index.js";
 
 function config(overrides: {
   claudeEnabled?: boolean;
@@ -26,7 +26,7 @@ function snapshot(
     windows?: Array<{ id: string; label: string; usedPct?: number | null; resetsAt?: string | null }>;
     error?: string | null;
   }>,
-): PaseoUsageSnapshot {
+): UsageSnapshot {
   return {
     fetchedAt: "2026-08-25T00:00:00.000Z",
     providers: providers.map((p) => ({
@@ -56,7 +56,7 @@ const CLAUDE_SNAPSHOT = () =>
     },
   ]);
 
-test("disabled agents short-circuit before any Paseo fetch", async () => {
+test("disabled agents short-circuit before any usage fetch", async () => {
   let fetchCalls = 0;
   const decision = await runGuard("codex", config({ codexEnabled: false }), {
     fetchUsage: () => {
@@ -68,7 +68,7 @@ test("disabled agents short-circuit before any Paseo fetch", async () => {
   assert.equal(fetchCalls, 0);
 });
 
-test("claude gates on paseo weekly and 5h windows", async () => {
+test("claude gates on weekly and 5h windows", async () => {
   const decision = await runGuard("claude", config({}), { fetchUsage: CLAUDE_SNAPSHOT });
   assert.equal(decision.allow, true);
 
@@ -84,7 +84,7 @@ test("claude gates on paseo weekly and 5h windows", async () => {
   const denied = await runGuard("claude", config({}), { fetchUsage: () => over });
   assert.equal(denied.allow, false);
   const reason = denied.evaluation.reasons[0];
-  assert.equal(reason.windowLabel, "Weekly (paseo)");
+  assert.equal(reason.windowLabel, "Weekly");
   assert.equal(reason.usedPct, 85);
   assert.equal(reason.blockAtPct, 80);
   assert.equal(reason.resetsAt, null);
@@ -115,7 +115,7 @@ test("codex gates on the OpenAI session window with threshold override", async (
   assert.equal(reason.resetsAt, "2026-08-31T16:04:13.000Z");
 });
 
-test("unreachable daemon fails closed with a reason", async () => {
+test("unreachable usage API fails closed with a reason", async () => {
   const decision = await runGuard("codex", config({}), {
     fetchUsage: () => {
       throw new Error("connect ECONNREFUSED");
@@ -123,7 +123,7 @@ test("unreachable daemon fails closed with a reason", async () => {
   });
   assert.equal(decision.allow, false);
   assert.equal(decision.evaluation.reasons[0]?.windowId, "usageUnknown");
-  assert.match(decision.evaluation.reasons[0]?.detail ?? "", /Paseo daemon unreachable/);
+  assert.match(decision.evaluation.reasons[0]?.detail ?? "", /Could not fetch codex usage/);
 });
 
 test("fail-open configs allow when usage is unknown", async () => {
@@ -138,14 +138,14 @@ test("fail-open configs allow when usage is unknown", async () => {
 test("missing provider entry or windows count as unknown usage", async () => {
   const noEntry = await runGuard("codex", config({}), { fetchUsage: () => snapshot([]) });
   assert.equal(noEntry.allow, false);
-  assert.match(noEntry.evaluation.reasons[0]?.detail ?? "", /no codex usage entry/);
+  assert.match(noEntry.evaluation.reasons[0]?.detail ?? "", /No codex usage entry/);
 
   const noWindows = await runGuard("codex", config({}), {
     fetchUsage: () =>
       snapshot([{ providerId: "codex", status: "unavailable", error: "not signed in" }]),
   });
   assert.equal(noWindows.allow, false);
-  assert.match(noWindows.evaluation.reasons[0]?.detail ?? "", /unavailable: not signed in/);
+  assert.match(noWindows.evaluation.reasons[0]?.detail ?? "", /unavailable — not signed in/);
 });
 
 test("a missing gate window is unknown usage, not a pass", async () => {
@@ -195,7 +195,7 @@ test("override and exceptions bypass every gate", async () => {
   assert.equal(exempted.allow, true);
 });
 
-test("claude weekly window is matched under either daemon naming", async () => {
+test("claude weekly window is matched under either vendor naming", async () => {
   const forkNaming = snapshot([
     {
       providerId: "claude",
@@ -207,7 +207,7 @@ test("claude weekly window is matched under either daemon naming", async () => {
   ]);
   const denied = await runGuard("claude", config({}), { fetchUsage: () => forkNaming });
   assert.equal(denied.allow, false);
-  assert.equal(denied.evaluation.reasons[0]?.windowLabel, "Weekly (paseo)");
+  assert.equal(denied.evaluation.reasons[0]?.windowLabel, "Weekly");
 
   const allowed = await runGuard("claude", config({}), { fetchUsage: CLAUDE_SNAPSHOT });
   assert.equal(allowed.allow, true);

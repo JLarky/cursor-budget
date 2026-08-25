@@ -1,6 +1,5 @@
 /**
- * Provider-reported usage windows. Same shape the guard already consumes
- * from Paseo — percents are 0–100 of the provider's own limit.
+ * Provider-reported usage windows. Percents are 0–100 of the provider's own limit.
  */
 
 export interface UsageWindow {

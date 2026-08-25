@@ -25,6 +25,10 @@ test("install writes an executable shim that consults codex-guard first", () => 
 test("shim rebuilds PATH exactly: filters only its own dir, keeps all empties", () => {
   const home = mkdtempSync(join(tmpdir(), "llm-budget-shim-e2e-"));
   installCodexShim(home);
+  writeFileSync(
+    join(home, ".llm-budget", "config.jsonc"),
+    '{ "enforcement": { "failClosed": false } }\n',
+  );
   const sibling = join(home, "sibling-bin-tools");
   mkdirSync(sibling, { recursive: true });
   const globDir = join(home, "glob*dir");

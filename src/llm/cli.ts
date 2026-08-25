@@ -20,10 +20,10 @@ import { runWatchdog } from "./codex-watchdog.js";
 import { getState, openLlmDb, setState } from "./db.js";
 import { runGuard } from "./guard.js";
 import {
-  fetchPaseoUsage,
+  fetchDirectUsage,
   providerUsage,
-  type PaseoUsageSnapshot,
-} from "./paseo.js";
+  type UsageSnapshot,
+} from "./usage/index.js";
 // Cursor Agent scope — same binary, own store (dashboard API + ~/.cursor/llm-budget).
 import { exceptCommand as cursorExceptCommand } from "../commands/except.js";
 import { historyCommand as cursorHistoryCommand } from "../commands/history.js";
@@ -286,9 +286,9 @@ dashboard state lives in ~/.cursor/llm-budget/.
   llm-budget config
   llm-budget cursor config
 
-How limits work: Claude Code and Codex read percentages from the Paseo
-daemon (Anthropic and OpenAI report their own limits). Cursor Agent reads
-the Cursor dashboard API. Each gate blocks when usage reaches its
+How limits work: Claude Code and Codex read percentages from Anthropic
+and OpenAI usage APIs (local login files). Cursor Agent reads the
+Cursor dashboard API. Each gate blocks when usage reaches its
 configured percent. If usage is unknown the guards block by default
 (fail closed).
 `;
@@ -299,10 +299,10 @@ async function statusCommand(home = homedir()): Promise<string> {
   const lines: string[] = ["llm-budget"];
   if (warning) lines.push(warning, "");
 
-  let snapshot: PaseoUsageSnapshot | null = null;
+  let snapshot: UsageSnapshot | null = null;
   let fetchError: string | null = null;
   try {
-    snapshot = await fetchPaseoUsage();
+    snapshot = await fetchDirectUsage({ home });
   } catch (error) {
     fetchError = error instanceof Error ? error.message : String(error);
   }
@@ -318,13 +318,13 @@ async function statusCommand(home = homedir()): Promise<string> {
 
     const provider = snapshot ? providerUsage(snapshot, agent) : null;
     if (!provider && !fetchError) {
-      lines.push(`  Usage unknown — Paseo has no ${agent} entry`);
+      lines.push(`  Usage unknown — no ${agent} entry`);
     } else if (!provider && fetchError) {
-      lines.push(`  Usage unknown — Paseo daemon unreachable (${fetchError})`);
+      lines.push(`  Usage unknown — ${fetchError}`);
     } else if (provider) {
       if (provider.status !== "available") {
         lines.push(
-          `  Paseo reports ${provider.status}` +
+          `  Usage ${provider.status}` +
             (provider.error ? ` — ${provider.error}` : ""),
         );
       }
@@ -332,9 +332,10 @@ async function statusCommand(home = homedir()): Promise<string> {
         lines.push("  No usage windows reported yet");
       }
       for (const w of provider.windows) {
+        const weekly = w.id === "seven_day" || w.id === "weekly";
         const blockAt =
           agent === "claude"
-            ? w.id === "seven_day"
+            ? weekly
               ? config.claudeCode.weeklyBlockAtPercent
               : config.claudeCode.rolling5hBlockAtPercent
             : (config.codex.openAiWeeklyBlockAtPercent ?? config.codex.weeklyBlockAtPercent);

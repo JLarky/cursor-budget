@@ -64,7 +64,7 @@ function looksLikeSnapshot(value: unknown): value is UsageSnapshot {
 }
 
 /**
- * Fetch Claude Code + Codex usage from the vendor APIs (no Paseo daemon).
+ * Fetch Claude Code + Codex usage from the vendor APIs.
  *
  * Never throws for expected failures: a missing login or a down API becomes
  * an `unavailable` / `error` provider entry so the guard can fail closed.
