@@ -29,6 +29,7 @@ test("status covers all three agents", { timeout: 60_000 }, async () => {
   assert.match(result.stdout, /Claude Code:/);
   assert.match(result.stdout, /Codex:/);
   assert.match(result.stdout, /Cursor Agent:/);
-  // Scoped escape hatches stay unambiguous.
-  assert.match(result.stdout, /\(claude\+codex\)/);
+  // Every agent block carries its own escape-hatch state.
+  assert.equal(result.stdout.split("Override:").length - 1 >= 3, true);
+  assert.doesNotMatch(result.stdout, /\(claude\+codex\)/);
 });

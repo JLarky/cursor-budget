@@ -267,9 +267,8 @@ async function statusCommand(home = homedir()): Promise<string> {
   const db = openLlmDb(home);
   const now = new Date();
   const rates = loadRates(config.budget.rates, home);
-  const lines: string[] = ["llm-budget", ""];
+  const lines: string[] = ["llm-budget"];
   if (warning) lines.push(warning, "");
-  lines.push(`Denominator: ${denominatorDisplay(config.budget.denominator)}`);
 
   for (const agent of ["claude", "codex"] as const) {
     const enabled = agent === "claude" ? config.claudeCode.enabled : config.codex.enabled;
@@ -279,6 +278,9 @@ async function statusCommand(home = homedir()): Promise<string> {
       lines.push("  disabled in config");
       continue;
     }
+
+    // Each agent block is self-contained: budget, windows, escape hatches.
+    lines.push(`  Denominator: ${denominatorDisplay(config.budget.denominator)}`);
 
     // Refresh from transcripts before displaying (same scan the guard runs).
     try {
@@ -326,15 +328,16 @@ async function statusCommand(home = homedir()): Promise<string> {
         }
       }
     }
-  }
 
-  const overrideRaw = getState(db, "override_until");
-  lines.push("");
-  lines.push(`Override: ${overrideRaw ? `until ${overrideRaw}` : "none"} (claude+codex)`);
-  lines.push(
-    `Exceptions: ${config.excludeSessionIds.length > 0 ? config.excludeSessionIds.join(", ") : "none"} (claude+codex)`,
-  );
-  lines.push("On unknown usage: block (failClosed)");
+    // Per-agent escape hatches: claude+codex share one store; cursor has its
+    // own (rendered inside its block below).
+    const overrideRaw = getState(db, "override_until");
+    lines.push(`  Override: ${overrideRaw ? `until ${overrideRaw}` : "none"}`);
+    lines.push(
+      `  Exceptions: ${config.excludeSessionIds.length > 0 ? config.excludeSessionIds.join(", ") : "none"}`,
+    );
+    lines.push("  On unknown usage: block (failClosed)");
+  }
 
   // Cursor Agent rides in the same status view so one command covers all
   // three guards. Its dashboard state lives in ~/.cursor/llm-budget and may
