@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { cursorHooksInstalled, installCommand } from "./install.js";
+import { tempHome } from "../test-home.js";
 
 test("cursor install wrapper invokes llm cli cursor hook", () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-install-"));
+  const home = tempHome("llm-budget-install-");
   try {
     assert.equal(cursorHooksInstalled(home), false);
     const result = installCommand(home);

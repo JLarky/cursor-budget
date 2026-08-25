@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { ensureConfig, parseConfig, writeConfig } from "./config.js";
 import { ensureLlmConfig, parseLlmConfig, writeLlmConfig } from "./llm/config.js";
 import { parseJsonc } from "./jsonc.js";
 import { configPath } from "./paths.js";
+import { tempHome } from "./test-home.js";
 
 test("shared config is written under ~/.config/llm-budget", () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-xdg-"));
+  const home = tempHome("llm-budget-xdg-");
   try {
     const llm = ensureLlmConfig(home);
     llm.claudeCode.weeklyBlockAtPercent = 24;

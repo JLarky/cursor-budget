@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG, type LlmConfig } from "./config.js";
 import { openLlmDb, getState } from "./db.js";
 import { runWatchdog } from "./codex-watchdog.js";
+import { tempHome } from "../test-home.js";
 
 // Decisions are injected, so one config serves both tripped and clear passes.
 function anyConfig(): LlmConfig {
@@ -13,7 +13,7 @@ function anyConfig(): LlmConfig {
 }
 
 test("watchdog kills codex processes on every tripped pass, notifies once", async () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-wd-"));
+  const home = tempHome("llm-budget-wd-");
   let decideBlock = true;
   const killed: number[] = [];
   const notified: string[] = [];
@@ -82,7 +82,7 @@ test("watchdog kills codex processes on every tripped pass, notifies once", asyn
 });
 
 test("watchdog fails closed when config is unreadable", async () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-wd-badcfg-"));
+  const home = tempHome("llm-budget-wd-badcfg-");
   mkdirSync(join(home, ".config", "llm-budget"), { recursive: true });
   writeFileSync(join(home, ".config", "llm-budget", "config.jsonc"), "{ not json");
   const killed: number[] = [];

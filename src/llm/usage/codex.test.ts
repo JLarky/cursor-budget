@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { fetchCodexUsage } from "./codex.js";
+import { tempHome } from "../../test-home.js";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -13,7 +13,7 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 function homeWithCodexAuth(): string {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-codex-"));
+  const home = tempHome("llm-budget-codex-");
   mkdirSync(join(home, ".codex"), { recursive: true });
   writeFileSync(
     join(home, ".codex", "auth.json"),
@@ -54,7 +54,7 @@ test("fetchCodexUsage maps session and weekly rate-limit windows", async () => {
 });
 
 test("fetchCodexUsage is unavailable without auth.json", async () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-codex-none-"));
+  const home = tempHome("llm-budget-codex-none-");
   const usage = await fetchCodexUsage({
     home,
     fetch: async () => {

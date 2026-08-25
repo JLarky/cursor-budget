@@ -3,6 +3,7 @@ import test from "node:test";
 import { DEFAULT_CONFIG, type LlmConfig } from "./config.js";
 import { runGuard } from "./guard.js";
 import type { UsageSnapshot } from "./usage/index.js";
+import { tempHome } from "../test-home.js";
 
 function config(overrides: {
   claudeEnabled?: boolean;
@@ -181,10 +182,7 @@ test("override and exceptions bypass every gate", async () => {
   assert.equal(excluded.allow, false); // not registered yet
 
   // Register the exception through the same store the guard reads.
-  const { mkdtempSync } = await import("node:fs");
-  const { tmpdir } = await import("node:os");
-  const { join } = await import("node:path");
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-guard-exc-"));
+  const home = tempHome("llm-budget-guard-exc-");
   const cfg = structuredClone(config({ codexOpenAiBlockAt: 50 }));
   cfg.excludeSessionIds = ["sess-exempt"];
   const exempted = await runGuard("codex", cfg, {

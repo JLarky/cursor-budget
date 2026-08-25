@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { installCodexShim, uninstallCodexShim } from "./codex-shim.js";
+import { tempHome } from "../test-home.js";
 
 test("install writes an executable shim that consults codex-guard first", () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-shim-"));
+  const home = tempHome("llm-budget-shim-");
   const output = installCodexShim(home);
   assert.match(output, /PATH/);
 
@@ -23,7 +23,7 @@ test("install writes an executable shim that consults codex-guard first", () => 
 });
 
 test("shim rebuilds PATH exactly: filters only its own dir, keeps all empties", () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-shim-e2e-"));
+  const home = tempHome("llm-budget-shim-e2e-");
   installCodexShim(home);
   mkdirSync(join(home, ".config", "llm-budget"), { recursive: true });
   writeFileSync(
@@ -72,7 +72,7 @@ test("shim rebuilds PATH exactly: filters only its own dir, keeps all empties", 
 });
 
 test("uninstall refuses to touch foreign files and keeps a disabled copy", () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-shim-"));
+  const home = tempHome("llm-budget-shim-");
   assert.match(uninstallCodexShim(home), /No llm-budget codex shim found/);
 
   const shimPath = join(home, ".local/share/llm-budget", "bin", "codex");

@@ -8,9 +8,9 @@ import {
   renderLlmConfigFile,
 } from "./config.js";
 import { parseJsonc } from "../jsonc.js";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { tempHome } from "../test-home.js";
 
 test("defaults: both guards on at 80%, fail closed", () => {
   const config = parseLlmConfig({});
@@ -69,7 +69,7 @@ test("jsonc: comments and trailing commas parse", () => {
 });
 
 test("first run writes a documented config.jsonc with every field", () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-cfg-"));
+  const home = tempHome("llm-budget-cfg-");
   const config = ensureLlmConfig(home);
   assert.deepEqual(config, DEFAULT_CONFIG);
   const path = join(home, ".config", "llm-budget", "config.jsonc");

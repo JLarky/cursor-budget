@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import {
@@ -12,6 +11,7 @@ import {
 } from "./config.js";
 import { configPath } from "./paths.js";
 import { stripJsoncComments } from "./jsonc.js";
+import { tempHome } from "./test-home.js";
 
 test("empty object uses defaults", () => {
   const config = parseConfig({});
@@ -105,7 +105,7 @@ test("accepts null totalBlockAtPercent and rate limit", () => {
 });
 
 test("ensureConfig treats whitespace-only file as empty object", () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-ws-"));
+  const home = tempHome("llm-budget-ws-");
   try {
     ensureConfig(home);
     writeFileSync(configPath(home), "  \n\t\n");
@@ -117,7 +117,7 @@ test("ensureConfig treats whitespace-only file as empty object", () => {
 });
 
 test("ensureConfig errors include config path and recovery hint", () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-err-"));
+  const home = tempHome("llm-budget-err-");
   try {
     ensureConfig(home);
     const path = configPath(home);
@@ -136,7 +136,7 @@ test("ensureConfig errors include config path and recovery hint", () => {
 
 
 test("writeConfig keeps the documented template after mutation", () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-write-"));
+  const home = tempHome("llm-budget-write-");
   try {
     const config = ensureConfig(home);
     config.excludeConversationIds = ["sess-1"];
@@ -154,7 +154,7 @@ test("writeConfig keeps the documented template after mutation", () => {
 });
 
 test("writeConfig does not clobber Claude Code keys in the shared file", () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-noclobber-"));
+  const home = tempHome("llm-budget-noclobber-");
   try {
     mkdirSync(join(home, ".config", "llm-budget"), { recursive: true });
     writeFileSync(
