@@ -1,140 +1,102 @@
-import {
-  windowUsage,
-  denominatorAmount,
-  usageDisplay,
-  usedPctOf,
-} from "./accounting.js";
 import type { LlmConfig } from "./config.js";
-import { getState, openLlmDb } from "./db.js";
+import { openLlmDb, getState } from "./db.js";
 import {
   formatBudgetBlockMessage,
   evaluateBudget,
+  formatPercent,
   type BudgetEvaluation,
 } from "./budget/evaluator.js";
-import { loadRates } from "./pricing.js";
 import type { WindowMeasurement } from "./budget/evaluator.js";
 import {
-  collectAgentUsage,
-  type AgentKind,
-  type ScanStats,
-} from "./transcripts/scanner.js";
-import {
-  nextUtcWeekStart,
-  rollingWindowStart,
-  utcWeekStart,
-} from "./budget/windows.js";
+  fetchPaseoUsage,
+  providerUsage,
+  type PaseoProviderUsage,
+  type PaseoUsageFetcher,
+  type PaseoUsageSnapshot,
+} from "./paseo.js";
 
 export type GuardAgent = "claude" | "codex";
 
 export interface GuardDeps {
+  /** Kept for config/db path resolution in embedded callers (hooks). */
   home?: string;
   now?: Date;
-  /** Injectable scan (tests); defaults to the real transcript collector. */
-  scan?: (agent: AgentKind) => ScanStats;
   /** Session id from the hook event (for exception matching). */
   sessionId?: string;
+  /** Injectable usage source (tests); defaults to the live Paseo daemon. */
+  fetchUsage?: PaseoUsageFetcher;
 }
 
-const ZERO_STATS: ScanStats = {
-  totalFiles: 0,
-  scannedFiles: 0,
-  skippedFiles: 0,
-  failedFiles: 0,
-  malformedLines: 0,
-  addedEvents: 0,
-  updatedEvents: 0,
-};
+const ZERO_SNAPSHOT: PaseoUsageSnapshot = { fetchedAt: "", providers: [] };
 
 export interface GuardDecision {
   allow: boolean;
   evaluation: BudgetEvaluation;
   config: LlmConfig;
-  stats: ScanStats;
+  snapshot: PaseoUsageSnapshot;
   sessionId: string;
 }
 
 /**
- * One guard pass for one agent: refresh local usage from transcripts, then
- * evaluate every configured gate.
+ * One guard pass for one agent: read percentages from the Paseo daemon's
+ * provider-usage feed, then evaluate the configured gates.
  *
- * Never throws for expected failure paths — an unreadable transcript store or
- * a failed scan becomes a `usageUnknown` decision so fail-closed callers can
- * still block with a reason.
+ * Never throws for expected failure paths — an unreachable daemon or an
+ * unavailable provider becomes a `usageUnknown` decision so fail-closed
+ * callers can still block with a reason.
  */
-export function runGuard(
+export async function runGuard(
   agent: GuardAgent,
   config: LlmConfig,
   deps: GuardDeps = {},
-): GuardDecision {
-  // Disabled agents short-circuit before any storage, transcript, or pricing
-  // work: opting out of a tool's guard must not be able to block it either.
+): Promise<GuardDecision> {
+  // Disabled agents short-circuit before any network work: opting out of a
+  // tool's guard must not be able to block it either.
   const enabled = agent === "claude" ? config.claudeCode.enabled : config.codex.enabled;
   if (!enabled) {
     return {
       allow: true,
       evaluation: { allow: true, reasons: [], overrideActive: false, excluded: false },
       config,
-      stats: { ...ZERO_STATS },
+      snapshot: ZERO_SNAPSHOT,
       sessionId: deps.sessionId ?? "",
     };
   }
 
-  const db = openLlmDb(deps.home);
-  const rates = loadRates(config.budget.rates, deps.home);
-
-  let stats: ScanStats;
-  let scanFailed = false;
-  try {
-    stats = deps.scan ? deps.scan(agent) : collectAgentUsage(agent, { home: deps.home });
-  } catch {
-    // Local db broken etc. Decide below via failClosed rather than crashing
-    // into a fail-open wrapper.
-    stats = { ...ZERO_STATS };
-    scanFailed = true;
-  }
-
-  // Capture time AFTER scanning so events appended while we scanned (or
-  // timestamped by file mtime during the scan) are inside the windows.
   const now = deps.now ?? new Date();
+  const db = openLlmDb(deps.home);
 
   const excluded = Boolean(deps.sessionId && config.excludeSessionIds.includes(deps.sessionId));
-
   const overrideRaw = getState(db, "override_until");
   const overrideUntil = overrideRaw ? new Date(overrideRaw) : null;
 
+  let snapshot: PaseoUsageSnapshot;
   let usageUnknownReason: string | null = null;
-  if (scanFailed) {
-    usageUnknownReason =
-      "local transcript database could not be read or updated (run llm-budget status)";
-  } else if (stats.unreadableRoots && stats.unreadableRoots.length > 0) {
-    usageUnknownReason = `transcript directories unreadable: ${stats.unreadableRoots.join("; ")}`;
-  } else if ((stats.failedFiles ?? 0) > 0) {
-    // Any unreadable file may hold threshold-crossing usage we cannot see.
-    const names = (stats.failedFileNames ?? []).map((f) => f.split("/").pop()).join(", ");
-    usageUnknownReason =
-      `${stats.failedFiles} transcript file(s) unreadable` +
-      (names ? ` (${names})` : "") +
-      " — their usage cannot be counted";
+  try {
+    snapshot = deps.fetchUsage ? await deps.fetchUsage() : await fetchPaseoUsage();
+  } catch (error) {
+    snapshot = ZERO_SNAPSHOT;
+    const detail = error instanceof Error ? error.message : String(error);
+    usageUnknownReason = `Paseo daemon unreachable — ${agent} usage unknown (${detail})`;
   }
-  // Always pass the resolved table even when empty: with a USD denominator an
-  // empty table must flag every model as unpriced (missing money), not skip
-  // pricing entirely.
-  const built = buildMeasurements(agent, config, db, rates, now);
 
-  // A USD denominator with unpriced models means measured spend is missing
-  // money, not zero money — same fail-closed treatment as unknown usage.
-  if (
-    usageUnknownReason === null &&
-    config.budget.denominator.kind === "usd" &&
-    built.unpricedModels.length > 0
-  ) {
+  const provider = usageUnknownReason ? null : providerUsage(snapshot, agent);
+  if (!usageUnknownReason && !provider) {
     usageUnknownReason =
-      `models without rates cost $0 in the math: ${built.unpricedModels.slice(0, 5).join(", ")}` +
-      " — run llm-budget import-rates";
+      `Paseo reported no ${agent} usage entry — is the ${agent} provider configured in Paseo?`;
+  } else if (!usageUnknownReason && provider && provider.windows.length === 0) {
+    const detail = provider.error ? `: ${provider.error}` : "";
+    usageUnknownReason = `Paseo reports ${agent} usage ${provider.status}${detail}`;
+  }
+
+  const measurements =
+    provider && !usageUnknownReason ? buildMeasurements(agent, config, provider) : [];
+  if (!usageUnknownReason) {
+    usageUnknownReason = missingGates(agent, measurements);
   }
 
   const evaluation = evaluateBudget({
-    measurements: built.measurements,
+    measurements,
     overrideUntil,
     now,
     excluded,
@@ -146,71 +108,79 @@ export function runGuard(
     allow: evaluation.allow,
     evaluation,
     config,
-    stats,
+    snapshot,
     sessionId: deps.sessionId ?? "",
   };
+}
+
+function effectiveCodexBlockAt(config: LlmConfig): number {
+  return config.codex.openAiWeeklyBlockAtPercent ?? config.codex.weeklyBlockAtPercent;
 }
 
 function buildMeasurements(
   agent: GuardAgent,
   config: LlmConfig,
-  db: ReturnType<typeof openLlmDb>,
-  rates: Parameters<typeof windowUsage>[4],
-  now: Date,
-): { measurements: WindowMeasurement[]; unpricedModels: string[] } {
-  const denom = config.budget.denominator;
-  const denomLabel = denominatorAmount(denom);
-  const weekFrom = utcWeekStart(now);
+  provider: PaseoProviderUsage,
+): WindowMeasurement[] {
+  const window = (id: string): (typeof provider.windows)[number] | null =>
+    provider.windows.find((w) => w.id === id) ?? null;
 
   if (agent === "claude") {
-    // Rolling windows are half-open (from, to]: an event exactly at
-    // now-windowMs has aged out.
-    const rollFrom = rollingWindowStart(now, config.claudeCode.rollingWindowMs);
-    const weeklyUsage = windowUsage(db, agent, weekFrom, now, rates, config.excludeSessionIds);
-    const rollingUsage = windowUsage(db, agent, rollFrom, now, rates, config.excludeSessionIds, {
-      fromInclusive: false,
-    });
-    return {
-      measurements: [
-        {
-          windowId: "claudeWeekly",
-          label: "Weekly",
-          usedPct: usedPctOf(denom, weeklyUsage),
-          blockAtPct: config.claudeCode.weeklyBlockAtPercent,
-          usedDisplay: usageDisplay(weeklyUsage, denom.kind),
-          denomDisplay: denomLabel,
-        },
-        {
-          windowId: "claudeRolling",
-          label: `Rolling ${formatHours(config.claudeCode.rollingWindowMs)}`,
-          usedPct: usedPctOf(denom, rollingUsage),
-          blockAtPct: config.claudeCode.rolling5hBlockAtPercent,
-          usedDisplay: usageDisplay(rollingUsage, denom.kind),
-          denomDisplay: denomLabel,
-        },
-      ],
-      unpricedModels: [...new Set([...weeklyUsage.unpricedModels, ...rollingUsage.unpricedModels])],
-    };
+    const measurements: WindowMeasurement[] = [];
+    const weekly = window("seven_day");
+    if (weekly) {
+      measurements.push({
+        windowId: "claudeWeekly",
+        label: "Weekly (paseo)",
+        usedPct: weekly.usedPct ?? Number.NaN,
+        blockAtPct: config.claudeCode.weeklyBlockAtPercent,
+        usedDisplay: pctDisplay(weekly.usedPct),
+        denomDisplay: "Claude weekly limit",
+        resetsAt: weekly.resetsAt,
+      });
+    }
+    const rolling = window("five_hour");
+    if (rolling) {
+      measurements.push({
+        windowId: "claudeRolling",
+        label: "Rolling 5h (paseo)",
+        usedPct: rolling.usedPct ?? Number.NaN,
+        blockAtPct: config.claudeCode.rolling5hBlockAtPercent,
+        usedDisplay: pctDisplay(rolling.usedPct),
+        denomDisplay: "Claude 5h limit",
+        resetsAt: rolling.resetsAt,
+      });
+    }
+    return measurements;
   }
 
-  const weeklyUsage = windowUsage(db, agent, weekFrom, now, rates, config.excludeSessionIds);
-  return {
-    measurements: [
-      {
-        windowId: "codexWeekly",
-        label: "Weekly",
-        usedPct: usedPctOf(denom, weeklyUsage),
-        blockAtPct: config.codex.weeklyBlockAtPercent,
-        usedDisplay: usageDisplay(weeklyUsage, denom.kind),
-        denomDisplay: denomLabel,
-      },
-    ],
-    unpricedModels: weeklyUsage.unpricedModels,
-  };
+  const session = window("session") ?? window("weekly");
+  if (!session) return [];
+  return [
+    {
+      windowId: "codexWeekly",
+      label: "Weekly (OpenAI)",
+      usedPct: session.usedPct ?? Number.NaN,
+      blockAtPct: effectiveCodexBlockAt(config),
+      usedDisplay: pctDisplay(session.usedPct),
+      denomDisplay: "OpenAI weekly limit",
+      resetsAt: session.resetsAt,
+    },
+  ];
 }
 
-function formatHours(ms: number): string {
-  return `${Math.round((ms / 3_600_000) * 10) / 10}h`;
+/** Every configured gate must have a measurement, else usage is unknown. */
+function missingGates(agent: GuardAgent, measurements: WindowMeasurement[]): string | null {
+  const present = new Set(measurements.map((m) => m.windowId));
+  const needed: WindowMeasurement["windowId"][] =
+    agent === "claude" ? ["claudeWeekly", "claudeRolling"] : ["codexWeekly"];
+  const missing = needed.filter((id) => !present.has(id));
+  if (missing.length === 0) return null;
+  return `Paseo did not report the ${missing.join(", ")} window(s) for ${agent}`;
+}
+
+function pctDisplay(usedPct: number | null): string {
+  return usedPct === null ? "unknown" : formatPercent(usedPct);
 }
 
 /** Render the user-facing deny message (session id + escape hatches). */
@@ -220,8 +190,4 @@ export function formatGuardDeny(
   sessionId?: string,
 ): string {
   return formatBudgetBlockMessage(decision.evaluation, agent, sessionId);
-}
-
-export function weeklyResetIso(now: Date): string {
-  return nextUtcWeekStart(now).toISOString();
 }

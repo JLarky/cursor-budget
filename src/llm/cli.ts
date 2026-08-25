@@ -1,18 +1,8 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { windowUsage, denominatorDisplay, formatNumber, formatUsd, usedPctOf } from "./accounting.js";
-import {
-  formatBudgetBlockMessage,
-  formatPercent,
-} from "./budget/evaluator.js";
-import {
-  nextUtcWeekStart,
-  parseDuration,
-  rollingWindowStart,
-  utcWeekStart,
-} from "./budget/windows.js";
+import { formatBudgetBlockMessage, formatPercent } from "./budget/evaluator.js";
+import { parseDuration } from "./budget/windows.js";
 import {
   ClaudeHookInputError,
   handleClaudeHook,
@@ -29,7 +19,11 @@ import { installCodexShim, uninstallCodexShim } from "./codex-shim.js";
 import { runWatchdog } from "./codex-watchdog.js";
 import { getState, openLlmDb, setState } from "./db.js";
 import { runGuard } from "./guard.js";
-import { catalogToRates, loadRates, writeRatesFile } from "./pricing.js";
+import {
+  fetchPaseoUsage,
+  providerUsage,
+  type PaseoUsageSnapshot,
+} from "./paseo.js";
 // Cursor scope: reuse the original modules unchanged.
 import { exceptCommand as cursorExceptCommand } from "../commands/except.js";
 import { historyCommand as cursorHistoryCommand } from "../commands/history.js";
@@ -66,7 +60,7 @@ async function main(): Promise<void> {
       if (sub === "hook") {
         // Internal: registered by `claude install`.
         const event = await readClaudeHookEvent();
-        respondToClaudeHook(event);
+        await respondToClaudeHook(event);
         return;
       }
       if (sub === undefined || sub === "-h" || sub === "--help" || sub === "help") {
@@ -109,7 +103,7 @@ async function main(): Promise<void> {
       // Strict config on purpose: an unreadable config must fail closed here,
       // so use ensureLlmConfig and let the top-level handler exit non-zero.
       const config = ensureLlmConfig();
-      const decision = runGuard("codex", config);
+      const decision = await runGuard("codex", config);
       if (!decision.allow) {
         process.stderr.write(
           `${formatBudgetBlockMessage(decision.evaluation, "codex", decision.sessionId)}\n`,
@@ -129,18 +123,9 @@ async function main(): Promise<void> {
     case "exclude":
       process.stdout.write(exceptCommand(rest));
       return;
-    case "history":
-      process.stdout.write(historyCommand());
-      return;
     case "config": {
       const { config, warning } = loadLlmConfigForRead();
       process.stdout.write(`${warning ?? ""}${JSON.stringify(config, null, 2)}\n`);
-      return;
-    }
-    case "import-rates": {
-      const src = rest[0];
-      if (!src) throw new Error("Usage: llm-budget import-rates <source-file>");
-      process.stdout.write(importRatesCommand(src));
       return;
     }
     case undefined:
@@ -209,10 +194,10 @@ async function cursorScope(args: string[]): Promise<void> {
   }
 }
 
-function respondToClaudeHook(event: ClaudeHookEvent): void {
+async function respondToClaudeHook(event: ClaudeHookEvent): Promise<void> {
   let response;
   try {
-    response = handleClaudeHook(event);
+    response = await handleClaudeHook(event);
   } catch (error) {
     blockClaudeHook(
       "UserPromptSubmit",
@@ -278,10 +263,10 @@ Pair with the sidecar enforcer:
   llm-budget watchdog [--interval <duration>] [--once]
 `;
 
-const HELP = `llm-budget \u2014 usage guards for Claude Code, Codex, and Cursor Agent
+const HELP = `llm-budget \u2014 percent-based guards for Claude Code, Codex, and Cursor Agent
 
 Usage:
-  llm-budget                    Live budget view for all three agents
+  llm-budget                    Live status view for all three agents
   llm-budget status | usage     Same as the bare invocation
   llm-budget help               This text
 
@@ -290,27 +275,33 @@ Scopes \u2014 every agent supports: install | uninstall | help
   llm-budget codex help         Codex CLI \u2014 PATH shim + sidecar watchdog
   llm-budget cursor help        Cursor Agent \u2014 dashboard API + ~/.cursor/hooks.json
 
-Shared budget commands (Claude Code and Codex):
+Shared commands (Claude Code and Codex):
   llm-budget override <duration>       Temporarily bypass the gates
   llm-budget override off              Clear the override
   llm-budget except add <session-id>
   llm-budget except remove <session-id>
   llm-budget except list
-  llm-budget history
   llm-budget config
-  llm-budget import-rates <source-file>
 
-Weekly caps use a pinned UTC week (Monday 00:00). Percentages are against the
-budget denominator configured in ~/.llm-budget/config.json.
+How limits work: percentages come from the Paseo daemon (Anthropic and
+OpenAI report their own limits). Each gate blocks when usage reaches its
+configured percent \u2014 no token or dollar budgets anywhere. If Paseo is
+unreachable the guards block by default (fail closed).
 `;
 
 async function statusCommand(home = homedir()): Promise<string> {
   const { config, warning } = loadLlmConfigForRead(home);
   const db = openLlmDb(home);
-  const now = new Date();
-  const rates = loadRates(config.budget.rates, home);
   const lines: string[] = ["llm-budget"];
   if (warning) lines.push(warning, "");
+
+  let snapshot: PaseoUsageSnapshot | null = null;
+  let fetchError: string | null = null;
+  try {
+    snapshot = await fetchPaseoUsage();
+  } catch (error) {
+    fetchError = error instanceof Error ? error.message : String(error);
+  }
 
   for (const agent of ["claude", "codex"] as const) {
     const enabled = agent === "claude" ? config.claudeCode.enabled : config.codex.enabled;
@@ -321,53 +312,34 @@ async function statusCommand(home = homedir()): Promise<string> {
       continue;
     }
 
-    // Each agent block is self-contained: budget, windows, escape hatches.
-    lines.push(`  Denominator: ${denominatorDisplay(config.budget.denominator)}`);
-
-    // Refresh from transcripts before displaying (same scan the guard runs).
-    try {
-      const stats = collectAgentUsageStats(agent, home);
-      if (stats.unreadableRoots && stats.unreadableRoots.length > 0) {
-        lines.push(`  Warning: unreadable transcript dirs — ${stats.unreadableRoots.join("; ")}`);
-      } else if (stats.failedFiles > 0) {
-        lines.push(`  Warning: ${stats.failedFiles} transcript file(s) failed to read`);
+    const provider = snapshot ? providerUsage(snapshot, agent) : null;
+    if (!provider && !fetchError) {
+      lines.push(`  Usage unknown — Paseo has no ${agent} entry`);
+    } else if (!provider && fetchError) {
+      lines.push(`  Usage unknown — Paseo daemon unreachable (${fetchError})`);
+    } else if (provider) {
+      if (provider.status !== "available") {
+        lines.push(
+          `  Paseo reports ${provider.status}` +
+            (provider.error ? ` — ${provider.error}` : ""),
+        );
       }
-    } catch {
-      lines.push("  Warning: transcript database unavailable; numbers may be stale");
-    }
-
-    const weekFrom = utcWeekStart(now);
-    const weekly = windowUsage(db, agent, weekFrom, now, rates, config.excludeSessionIds);
-    const weeklyPct = usedPctOf(config.budget.denominator, weekly);
-
-    if (agent === "claude") {
-      const rollFrom = rollingWindowStart(now, config.claudeCode.rollingWindowMs);
-      const rolling = windowUsage(db, agent, rollFrom, now, rates, config.excludeSessionIds);
-      const rollingPct = usedPctOf(config.budget.denominator, rolling);
-      const hours = Math.round((config.claudeCode.rollingWindowMs / 3_600_000) * 10) / 10;
-      lines.push(
-        `  Weekly (${weekFrom.toISOString().slice(0, 10)}, resets ${nextUtcWeekStart(now).toISOString().slice(0, 10)}):`,
-        `    ${usageLine(weeklyPct, config.claudeCode.weeklyBlockAtPercent, weekly, config.budget.denominator.kind)}`,
-        `  Rolling ${hours}h:`,
-        `    ${usageLine(rollingPct, config.claudeCode.rolling5hBlockAtPercent, rolling, config.budget.denominator.kind)}`,
-      );
-    } else {
-      lines.push(
-        `  Weekly (pinned UTC week, resets ${nextUtcWeekStart(now).toISOString().slice(0, 10)}):`,
-        `    ${usageLine(weeklyPct, config.codex.weeklyBlockAtPercent, weekly, config.budget.denominator.kind)}`,
-      );
-      const openaiRaw = getState(db, "codex_openai_rate_limits");
-      if (openaiRaw) {
-        try {
-          const info = JSON.parse(openaiRaw) as {
-            usedPercent?: number;
-            resetsAt?: string | null;
-          };
-          const reset = info.resetsAt ? `, resets ${info.resetsAt}` : "";
-          lines.push(`  OpenAI reports ${info.usedPercent}% of its own weekly limit${reset}`);
-        } catch {
-          // Malformed cached telemetry is display-only; ignore.
-        }
+      if (provider.windows.length === 0) {
+        lines.push("  No usage windows reported yet");
+      }
+      for (const w of provider.windows) {
+        const blockAt =
+          agent === "claude"
+            ? w.id === "seven_day"
+              ? config.claudeCode.weeklyBlockAtPercent
+              : config.claudeCode.rolling5hBlockAtPercent
+            : (config.codex.openAiWeeklyBlockAtPercent ?? config.codex.weeklyBlockAtPercent);
+        const pct =
+          typeof w.usedPct === "number" && Number.isFinite(w.usedPct)
+            ? formatPercent(w.usedPct)
+            : "unknown";
+        const reset = w.resetsAt ? ` — resets ${w.resetsAt}` : "";
+        lines.push(`  ${w.label}: ${pct} of ${formatPercent(blockAt)} block threshold${reset}`);
       }
     }
 
@@ -396,7 +368,6 @@ async function statusCommand(home = homedir()): Promise<string> {
         // so an offline Cursor does not visually dominate the output.
         const m = l.match(/^\s*Period usage: unavailable \(([^)]*)\)\s*$/);
         if (!m) return l;
-        const reason = m[1].split(":")[0].trim();
         return "Dashboard quota: unavailable — sign in with cursor-agent";
       })
       .filter((l) => l.trim() !== "");
@@ -411,27 +382,6 @@ async function statusCommand(home = homedir()): Promise<string> {
   }
 
   return `${lines.join("\n")}\n`;
-}
-
-import { collectAgentUsage } from "./transcripts/scanner.js";
-
-function collectAgentUsageStats(agent: "claude" | "codex", home?: string) {
-  return collectAgentUsage(agent, { home });
-}
-
-function usageLine(
-  pct: number,
-  blockAt: number,
-  usage: ReturnType<typeof windowUsage>,
-  kind: "tokens" | "usd",
-): string {
-  const used =
-    kind === "tokens" ? `${formatNumber(usage.totals.totalTokens)} tokens` : formatUsd(usage.usd);
-  const unpriced =
-    usage.unpricedModels.length > 0 && kind === "usd"
-      ? ` (unpriced: ${usage.unpricedModels.slice(0, 4).join(", ")})`
-      : "";
-  return `${formatPercent(pct)} of ${formatPercent(blockAt)} block threshold — ${used}${unpriced}`;
 }
 
 function overrideCommand(spec: string | undefined): string {
@@ -485,44 +435,6 @@ function exceptCommand(args: string[], home = homedir()): string {
 function formatList(ids: string[]): string {
   if (ids.length === 0) return "No session exceptions.\n";
   return `Session exceptions (${ids.length}):\n${ids.map((id) => `  ${id}`).join("\n")}\n`;
-}
-
-function historyCommand(home = homedir()): string {
-  const db = openLlmDb(home);
-  const rows = db
-    .prepare(
-      "SELECT ts, agent, session_id, model, total_tokens FROM token_events ORDER BY ts DESC LIMIT 40",
-    )
-    .all() as Array<Record<string, unknown>>;
-  if (rows.length === 0) return "No token events recorded yet.\n";
-  const lines = rows.map(
-    (r) =>
-      `${r.ts}  ${String(r.agent).padEnd(6)}  ${String(r.session_id ?? "-").slice(0, 12)}  ${String(r.model ?? "?")}  ${r.total_tokens}`,
-  );
-  return [`Last ${rows.length} events:`, ...lines].join("\n") + "\n";
-}
-
-function importRatesCommand(src: string, home = homedir()): string {
-  if (!existsSync(src)) throw new Error(`No such file: ${src}`);
-  const raw = JSON.parse(readFileSync(src, "utf8")) as Record<string, unknown>;
-  // Accept either a raw models.dev catalog or token-tracker's pricing-cache.json.
-  const catalog = raw.catalog ?? raw;
-  const { table, skipped } = catalogToRates(catalog);
-  if (Object.keys(table).length === 0) {
-    throw new Error("Catalog contained no usable model rates");
-  }
-  // Merge over any existing file so re-imports never drop hand edits.
-  let merged = table;
-  const path = join(home, ".llm-budget", "rates.json");
-  if (existsSync(path)) {
-    try {
-      merged = { ...(JSON.parse(readFileSync(path, "utf8")) as object), ...table } as typeof table;
-    } catch {
-      // Unreadable old file: overwrite.
-    }
-  }
-  writeRatesFile(merged, home);
-  return `Imported ${Object.keys(table).length} model rates to ${path} (skipped ${skipped}).\n`;
 }
 
 main().catch((error) => {

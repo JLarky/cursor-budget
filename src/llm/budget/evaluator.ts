@@ -1,15 +1,16 @@
 import type { BudgetWindowId } from "./windows.js";
-import { nextUtcWeekStart, utcWeekStart } from "./windows.js";
+
 
 export interface WindowMeasurement {
   windowId: BudgetWindowId;
   label: string;
-  /** 0–100 percent of the configured denominator actually used. */
+  /** 0–100 percent of the provider's own limit actually used. */
   usedPct: number;
   /** Block threshold in the same scale. */
   blockAtPct: number;
   usedDisplay: string;
   denomDisplay: string;
+  resetsAt?: string | null;
 }
 
 export interface BudgetBlockReason {
@@ -19,6 +20,7 @@ export interface BudgetBlockReason {
   blockAtPct?: number;
   usedDisplay?: string;
   denomDisplay?: string;
+  resetsAt?: string | null;
   /** Why usage could not be determined (only for `usageUnknown`). */
   detail?: string;
 }
@@ -63,6 +65,7 @@ export function evaluateBudget(input: {
         blockAtPct: m.blockAtPct,
         usedDisplay: m.usedDisplay,
         denomDisplay: m.denomDisplay,
+        resetsAt: m.resetsAt ?? null,
       });
     }
   }
@@ -109,15 +112,8 @@ export function formatBudgetBlockMessage(
         `  ${formatPercent(primary.usedPct ?? Number.NaN)} of ${formatPercent(primary.blockAtPct ?? Number.NaN)} block threshold`,
         `  ${primary.usedDisplay} / ${primary.denomDisplay}`,
       );
+      if (primary.resetsAt) lines.push(`  Resets: ${primary.resetsAt}`);
     }
-    lines.push("");
-  }
-
-  if (agent === "codex") {
-    const weekStart = utcWeekStart(new Date());
-    lines.push(
-      `Weekly window: pinned UTC week starting ${weekStart.toISOString()} — resets ${nextUtcWeekStart(new Date()).toISOString()}`,
-    );
     lines.push("");
   }
 

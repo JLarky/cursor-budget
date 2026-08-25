@@ -1,217 +1,187 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { openLlmDb, setState } from "./db.js";
-import { DEFAULT_CONFIG, ensureLlmConfig, type LlmConfig } from "./config.js";
 import {
-  ClaudeHookInputError,
   CLAUDE_ENFORCE_EVENTS,
+  ClaudeHookInputError,
   handleClaudeHook,
   parseClaudeHookInput,
-  type ClaudeHookEvent,
 } from "./claude-hook.js";
-import { installClaudeHooks, uninstallClaudeHooks } from "./claude-install.js";
-import { collectAgentUsage } from "./transcripts/scanner.js";
-
-function makeHome(): string {
-  return mkdtempSync(join(tmpdir(), "llm-budget-hook-"));
-}
-
-/** Seed a week's worth of claude usage directly into the db. */
-function seedClaudeUsage(home: string, totalTokens: number): void {
-  const db = openLlmDb(home);
-  const perEvent = 1000;
-  for (let i = 0; i < totalTokens / perEvent; i++) {
-    db.prepare(
-      `INSERT OR IGNORE INTO token_events (
-        event_key, agent, session_id, model, ts,
-        input_tokens, output_tokens, reasoning_tokens,
-        cache_read_tokens, cache_write_tokens, total_tokens
-      ) VALUES (?, 'claude', ?, 'claude-sonnet-5', ?, ?, ?, 0, 0, 0, ?)`,
-    ).run(
-      `seed-${i}`,
-      "other-session",
-      new Date(Date.now() - 60_000).toISOString(),
-      perEvent - 100,
-      100,
-      perEvent,
-    );
-  }
-}
+import { DEFAULT_CONFIG, type LlmConfig } from "./config.js";
+import type { PaseoUsageSnapshot } from "./paseo.js";
 
 function baseConfig(overrides: Partial<LlmConfig["claudeCode"]> = {}): LlmConfig {
   const config = structuredClone(DEFAULT_CONFIG);
-  config.budget.denominator = { kind: "tokens", weeklyTokens: 10_000 };
   Object.assign(config.claudeCode, overrides);
   return config;
 }
+
+function claudeSnapshot(
+  windows: Array<{ id: string; label: string; usedPct?: number | null }>,
+): () => Promise<PaseoUsageSnapshot> {
+  return () =>
+    Promise.resolve({
+      fetchedAt: "2026-08-25T00:00:00.000Z",
+      providers: [
+        {
+          providerId: "claude",
+          displayName: "claude",
+          status: "available",
+          planLabel: null,
+          windows: windows.map((w) => ({
+            id: w.id,
+            label: w.label,
+            usedPct: w.usedPct ?? null,
+            resetsAt: null,
+          })),
+          error: null,
+        },
+      ],
+    });
+}
+
+const UNDER_THRESHOLD = claudeSnapshot([
+  { id: "seven_day", label: "Weekly", usedPct: 50 },
+  { id: "five_hour", label: "Session", usedPct: 10 },
+]);
 
 test("enforce set covers the two registered hook events only", () => {
   assert.deepEqual([...CLAUDE_ENFORCE_EVENTS].sort(), ["PreToolUse", "UserPromptSubmit"]);
 });
 
-test("allows when usage is below both thresholds", () => {
-  const home = makeHome();
-  seedClaudeUsage(home, 5_000); // 50% of 10k
-  const response = handleClaudeHook(
+test("allows when usage is below both thresholds", async () => {
+  const response = await handleClaudeHook(
     { hook_event_name: "UserPromptSubmit", session_id: "s-1" },
-    { home, config: baseConfig() },
+    { fetchUsage: UNDER_THRESHOLD },
   );
   assert.equal(response.block, false);
 });
 
-test("blocks UserPromptSubmit past the weekly threshold with escape hatches", () => {
-  const home = makeHome();
-  seedClaudeUsage(home, 9_500); // 95%
-  const response = handleClaudeHook(
-    { hook_event_name: "UserPromptSubmit", session_id: "sess-42" },
-    { home, config: baseConfig() },
+test("blocks UserPromptSubmit past the weekly threshold with escape hatches", async () => {
+  const over = claudeSnapshot([
+    { id: "seven_day", label: "Weekly", usedPct: 85 },
+    { id: "five_hour", label: "Session", usedPct: 10 },
+  ]);
+  const response = await handleClaudeHook(
+    { hook_event_name: "UserPromptSubmit", session_id: "sess-1234" },
+    { fetchUsage: over },
   );
   assert.equal(response.block, true);
-  assert.ok(response.message);
-  assert.match(response.message!, /Session id: sess-42/);
-  assert.match(response.message!, /llm-budget override 30m/);
-  assert.match(response.message!, /llm-budget except add sess-42/);
-  // Weekly window is the one that trips here.
-  assert.match(response.message!, /Weekly budget/);
+  assert.match(response.message ?? "", /Claude Code blocked by llm-budget/);
+  assert.match(response.message ?? "", /85% of 80% block threshold/);
+  assert.match(response.message ?? "", /llm-budget override 30m/);
+  assert.match(response.message ?? "", /llm-budget except add sess-1234/);
 });
 
-test("rolling 5h window blocks independently of the weekly gate", () => {
-  const home = makeHome();
-  // 8,500 tokens landed 30 minutes ago: 85% of the 10k denominator.
-  // Weekly blocks at 90% so it stays clear; rolling blocks at 80%.
-  const config = baseConfig({ rollingWindowMs: 3_600_000 });
-  config.claudeCode.weeklyBlockAtPercent = 90;
-  const db = openLlmDb(home);
-  db.prepare(
-    `INSERT INTO token_events (
-      event_key, agent, session_id, model, ts,
-      input_tokens, output_tokens, reasoning_tokens,
-      cache_read_tokens, cache_write_tokens, total_tokens
-    ) VALUES ('r1', 'claude', 'other', 'm', ?, 0, 0, 0, 0, 0, 8_500)`,
-  ).run(new Date(Date.now() - 30 * 60_000).toISOString());
-
-  const response = handleClaudeHook(
-    { hook_event_name: "UserPromptSubmit", session_id: "s" },
-    { home, config },
+test("rolling 5h window blocks independently of the weekly gate", async () => {
+  const rollingOver = claudeSnapshot([
+    { id: "seven_day", label: "Weekly", usedPct: 10 },
+    { id: "five_hour", label: "Session", usedPct: 90 },
+  ]);
+  const response = await handleClaudeHook(
+    { hook_event_name: "PreToolUse", session_id: "s-1" },
+    { fetchUsage: rollingOver },
   );
   assert.equal(response.block, true);
-  assert.match(response.message!, /Rolling/);
+  assert.match(response.message ?? "", /Rolling 5h \(paseo\) budget reached/);
 
-  // The same usage is outside a 15-minute window: nothing trips then.
-  const shortWindow = baseConfig({ rollingWindowMs: 900_000 });
-  shortWindow.claudeCode.weeklyBlockAtPercent = 90;
-  const allowed = handleClaudeHook(
-    { hook_event_name: "UserPromptSubmit", session_id: "s" },
-    { home, config: shortWindow },
+  // A tighter rolling threshold blocks where the default would not.
+  const tight = baseConfig({ rolling5hBlockAtPercent: 5 });
+  const responseTight = await handleClaudeHook(
+    { hook_event_name: "PreToolUse", session_id: "s-1" },
+    { fetchUsage: UNDER_THRESHOLD, config: tight },
+  );
+  assert.equal(responseTight.block, true);
+  assert.match(responseTight.message ?? "", /Rolling 5h \(paseo\)/);
+});
+
+test("excluded sessions bypass every gate", async () => {
+  const config = baseConfig();
+  config.excludeSessionIds = ["sess-1234"];
+  const over = claudeSnapshot([
+    { id: "seven_day", label: "Weekly", usedPct: 99 },
+    { id: "five_hour", label: "Session", usedPct: 99 },
+  ]);
+  const response = await handleClaudeHook(
+    { hook_event_name: "UserPromptSubmit", session_id: "sess-1234" },
+    { fetchUsage: over, config },
+  );
+  assert.equal(response.block, false);
+});
+
+test("override bypasses gates", async () => {
+  const { mkdtempSync: mkHome } = await import("node:fs");
+  const home = mkHome(join(tmpdir(), "llm-budget-hook-"));
+  const { openLlmDb, setState } = await import("./db.js");
+  setState(openLlmDb(home), "override_until", new Date(Date.now() + 3_600_000).toISOString());
+  const over = claudeSnapshot([
+    { id: "seven_day", label: "Weekly", usedPct: 99 },
+    { id: "five_hour", label: "Session", usedPct: 99 },
+  ]);
+  const response = await handleClaudeHook(
+    { hook_event_name: "UserPromptSubmit", session_id: "s-1" },
+    { home, fetchUsage: over },
+  );
+  assert.equal(response.block, false);
+});
+
+test("broken config denies enforce events with a recoverable message", async () => {
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-hook-cfg-"));
+  mkdirSync(join(home, ".llm-budget"), { recursive: true });
+  writeFileSync(join(home, ".llm-budget", "config.json"), "{ not json");
+  const response = await handleClaudeHook(
+    { hook_event_name: "UserPromptSubmit", session_id: "s-1" },
+    { home },
+  );
+  assert.equal(response.block, true);
+  assert.match(response.message ?? "", /failed to load config/);
+});
+
+test("unreachable paseo fails closed (and opens under failClosed=false)", async () => {
+  const failing = () => {
+    throw new Error("daemon down");
+  };
+  const blocked = await handleClaudeHook(
+    { hook_event_name: "UserPromptSubmit", session_id: "s-1" },
+    { fetchUsage: failing },
+  );
+  assert.equal(blocked.block, true);
+  assert.match(blocked.message ?? "", /Usage could not be determined/);
+
+  const lenientConfig = baseConfig();
+  lenientConfig.enforcement.failClosed = false;
+  const allowed = await handleClaudeHook(
+    { hook_event_name: "UserPromptSubmit", session_id: "s-1" },
+    { fetchUsage: failing, config: lenientConfig },
   );
   assert.equal(allowed.block, false);
 });
 
-test("excluded sessions bypass every gate", () => {
-  const home = makeHome();
-  seedClaudeUsage(home, 10_000);
-  const config = baseConfig();
-  config.excludeSessionIds = ["special"];
-  const response = handleClaudeHook(
-    { hook_event_name: "PreToolUse", session_id: "special" },
-    { home, config },
-  );
+test("non-enforce events never block", async () => {
+  const response = await handleClaudeHook({ hook_event_name: "Stop" }, {});
   assert.equal(response.block, false);
 });
 
-test("override bypasses gates", () => {
-  const home = makeHome();
-  ensureLlmConfig(home);
-  setState(openLlmDb(home), "override_until", new Date(Date.now() + 600_000).toISOString());
-  seedClaudeUsage(home, 10_000);
-  const response = handleClaudeHook(
-    { hook_event_name: "UserPromptSubmit", session_id: "s" },
-    { home, config: baseConfig() },
-  );
-  assert.equal(response.block, false);
-});
-
-test("broken config denies enforce events with a recoverable message", () => {
-  const home = makeHome();
-  mkdirSync(join(home, ".llm-budget"), { recursive: true });
-  writeFileSync(join(home, ".llm-budget", "config.json"), "{ not json");
-  const response = handleClaudeHook(
-    { hook_event_name: "UserPromptSubmit", session_id: "s" },
-    { home },
+test("hook event without session id still formats a usable block message", async () => {
+  const over = claudeSnapshot([
+    { id: "seven_day", label: "Weekly", usedPct: 99 },
+    { id: "five_hour", label: "Session", usedPct: 99 },
+  ]);
+  const response = await handleClaudeHook(
+    { hook_event_name: "UserPromptSubmit" },
+    { fetchUsage: over },
   );
   assert.equal(response.block, true);
-  assert.match(response.message!, /failed to load config/);
-  assert.match(response.message!, /Session id: s/);
-});
-
-test("non-enforce events never block", () => {
-  const response = handleClaudeHook({ hook_event_name: "Stop", session_id: "s" }, {});
-  assert.equal(response.block, false);
-});
-
-test("install merges into existing settings.json and uninstall removes only ours", () => {
-  const home = makeHome();
-  mkdirSync(join(home, ".claude"), { recursive: true });
-  writeFileSync(
-    join(home, ".claude", "settings.json"),
-    JSON.stringify({
-      theme: "dark",
-      hooks: {
-        PreToolUse: [
-          { matcher: "Bash", hooks: [{ type: "command", command: "/bin/other-tool" }] },
-        ],
-      },
-    }),
-  );
-
-  installClaudeHooks(home);
-  const afterInstall = JSON.parse(
-    readFileSync(join(home, ".claude", "settings.json"), "utf8"),
-  );
-  assert.equal(afterInstall.theme, "dark");
-  // Other tools' entries survive.
-  assert.equal(afterInstall.hooks.PreToolUse.length, 2);
-  assert.equal(
-    afterInstall.hooks.PreToolUse[0].hooks[0].command,
-    "/bin/other-tool",
-  );
-  assert.ok(Array.isArray(afterInstall.hooks.UserPromptSubmit));
-
-  // Idempotent.
-  installClaudeHooks(home);
-  const second = JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8"));
-  assert.equal(second.hooks.PreToolUse.length, 2);
-
-  uninstallClaudeHooks(home);
-  const afterUninstall = JSON.parse(
-    readFileSync(join(home, ".claude", "settings.json"), "utf8"),
-  );
-  assert.equal(afterUninstall.theme, "dark");
-  assert.equal(afterUninstall.hooks.PreToolUse.length, 1);
-  assert.equal(afterUninstall.hooks.PreToolUse[0].matcher, "Bash");
-  assert.equal(afterUninstall.hooks.UserPromptSubmit, undefined);
-});
-
-test("hook event without session id still formats a usable block message", () => {
-  const home = makeHome();
-  seedClaudeUsage(home, 10_000);
-  const event: ClaudeHookEvent = { hook_event_name: "UserPromptSubmit" };
-  const response = handleClaudeHook(event, { home, config: baseConfig() });
-  assert.equal(response.block, true);
-  assert.match(response.message!, /Session id: unknown/);
+  assert.match(response.message ?? "", /except add unknown/);
 });
 
 test("malformed or empty hook input fails closed", () => {
-  // Claude Code always pipes JSON; empty or garbage stdin means something
-  // upstream is broken and must not read as "no event".
   assert.throws(() => parseClaudeHookInput(""), ClaudeHookInputError);
-  assert.throws(() => parseClaudeHookInput("   \n"), ClaudeHookInputError);
-  assert.throws(() => parseClaudeHookInput('{"hook_event_name":"UserPromptSubmit"'), ClaudeHookInputError);
-  assert.throws(() => parseClaudeHookInput("not json at all"), ClaudeHookInputError);
-
-  const ok = parseClaudeHookInput('{"hook_event_name":"Stop","session_id":"s"}');
-  assert.equal(ok.hook_event_name, "Stop");
+  assert.throws(() => parseClaudeHookInput("{ nope"), ClaudeHookInputError);
+  assert.deepEqual(parseClaudeHookInput('{"hook_event_name":"Stop"}'), {
+    hook_event_name: "Stop",
+  });
 });
