@@ -127,7 +127,9 @@ function buildMeasurements(
 
   if (agent === "claude") {
     const measurements: WindowMeasurement[] = [];
-    const weekly = window("seven_day");
+    // Daemon versions label the weekly window "weekly"; the fork's quota
+    // provider calls it "seven_day" — accept both.
+    const weekly = window("seven_day") ?? window("weekly");
     if (weekly) {
       measurements.push({
         windowId: "claudeWeekly",

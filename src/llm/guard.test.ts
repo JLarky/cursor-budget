@@ -194,3 +194,21 @@ test("override and exceptions bypass every gate", async () => {
   });
   assert.equal(exempted.allow, true);
 });
+
+test("claude weekly window is matched under either daemon naming", async () => {
+  const forkNaming = snapshot([
+    {
+      providerId: "claude",
+      windows: [
+        { id: "weekly", label: "Weekly", usedPct: 85 },
+        { id: "five_hour", label: "Session", usedPct: 5 },
+      ],
+    },
+  ]);
+  const denied = await runGuard("claude", config({}), { fetchUsage: () => forkNaming });
+  assert.equal(denied.allow, false);
+  assert.equal(denied.evaluation.reasons[0]?.windowLabel, "Weekly (paseo)");
+
+  const allowed = await runGuard("claude", config({}), { fetchUsage: CLAUDE_SNAPSHOT });
+  assert.equal(allowed.allow, true);
+});
