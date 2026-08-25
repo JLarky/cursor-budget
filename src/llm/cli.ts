@@ -69,8 +69,13 @@ async function main(): Promise<void> {
         respondToClaudeHook(event);
         return;
       }
+      if (sub === undefined || sub === "-h" || sub === "--help" || sub === "help") {
+        process.stdout.write(CLAUDE_SCOPE_HELP);
+        return;
+      }
       throw new Error(
-        "Usage:\n  llm-budget claude install\n  llm-budget claude uninstall",
+        "Unknown command: llm-budget claude " + sub +
+          "\nRun \`llm-budget claude help\`.",
       );
     }
     case "codex": {
@@ -83,8 +88,13 @@ async function main(): Promise<void> {
         process.stdout.write(uninstallCodexShim());
         return;
       }
+      if (sub === undefined || sub === "-h" || sub === "--help" || sub === "help") {
+        process.stdout.write(CODEX_SCOPE_HELP);
+        return;
+      }
       throw new Error(
-        "Usage:\n  llm-budget codex install\n  llm-budget codex uninstall",
+        "Unknown command: llm-budget codex " + sub +
+          "\nRun \`llm-budget codex help\`.",
       );
     }
     case "watchdog": {
@@ -248,30 +258,47 @@ Primary gate uses Cursor dashboard period usage (Cursor Models / Other Models).
 Backstop is a local rolling-hour event count.
 `;
 
-const HELP = `llm-budget — usage guards for Cursor Agent, Claude Code, and Codex
+const CLAUDE_SCOPE_HELP = `llm-budget claude \u2014 Claude Code guard
+
+Commands:
+  llm-budget claude install     Register UserPromptSubmit + PreToolUse hooks
+                                in ~/.claude/settings.json
+  llm-budget claude uninstall   Remove those hooks
+  llm-budget claude help        This text
+`;
+
+const CODEX_SCOPE_HELP = `llm-budget codex \u2014 Codex guard
+
+Commands:
+  llm-budget codex install      Install the PATH shim that wraps the codex binary
+  llm-budget codex uninstall    Remove the PATH shim
+  llm-budget codex help         This text
+
+Pair with the sidecar enforcer:
+  llm-budget watchdog [--interval <duration>] [--once]
+`;
+
+const HELP = `llm-budget \u2014 usage guards for Claude Code, Codex, and Cursor Agent
 
 Usage:
-  llm-budget status                     # Show combined status for all agents
-  llm-budget usage                      # Alias for status
-  llm-budget override <duration>        # Temporarily bypass Claude and Codex gates
-  llm-budget override off               # Clear the Claude and Codex override
+  llm-budget                    Live budget view for all three agents
+  llm-budget status | usage     Same as the bare invocation
+  llm-budget help               This text
+
+Scopes \u2014 every agent supports: install | uninstall | help
+  llm-budget claude help        Claude Code \u2014 native hooks in ~/.claude/settings.json
+  llm-budget codex help         Codex CLI \u2014 PATH shim + sidecar watchdog
+  llm-budget cursor help        Cursor Agent \u2014 dashboard API + ~/.cursor/hooks.json
+
+Shared budget commands (Claude Code and Codex):
+  llm-budget override <duration>       Temporarily bypass the gates
+  llm-budget override off              Clear the override
   llm-budget except add <session-id>
   llm-budget except remove <session-id>
   llm-budget except list
   llm-budget history
   llm-budget config
   llm-budget import-rates <source-file>
-  llm-budget claude install             # Register Claude Code hooks
-  llm-budget claude uninstall           # Remove Claude Code hooks
-  llm-budget codex install              # Install the Codex PATH shim
-  llm-budget codex uninstall            # Remove the Codex PATH shim
-  llm-budget watchdog [--interval <duration>] [--once]
-  llm-budget cursor help                # Show Cursor Agent guard commands
-
-Scopes:
-  claude  Claude Code guard — native hooks in ~/.claude/settings.json
-  codex   Codex guard — PATH shim + sidecar watchdog
-  cursor  Cursor Agent guard — dashboard API + hooks in ~/.cursor/hooks.json
 
 Weekly caps use a pinned UTC week (Monday 00:00). Percentages are against the
 budget denominator configured in ~/.llm-budget/config.json.
