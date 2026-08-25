@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import {
@@ -12,6 +11,7 @@ import { DEFAULT_CONFIG } from "./config.js";
 import { CURSOR_OVERRIDE_KEY } from "./db/keys.js";
 import { hasWarning, openDb, setState } from "./db/client.js";
 import { handleHook, resolvePeriodUsage } from "./hook.js";
+import { tempHome } from "./test-home.js";
 
 function fakeResult(
   overrides: Partial<CursorPeriodUsageResult> & {
@@ -70,7 +70,7 @@ function fakeResult(
 }
 
 test("invalid config.jsonc denies enforce events instead of failing open", async () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-hook-"));
+  const home = tempHome("llm-budget-hook-");
   try {
     mkdirSync(join(home, ".config", "llm-budget"), { recursive: true });
     writeFileSync(
@@ -97,7 +97,7 @@ test("invalid config.jsonc denies enforce events instead of failing open", async
 });
 
 test("invalid config.jsonc still allows non-enforce record events", async () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-hook-rec-"));
+  const home = tempHome("llm-budget-hook-rec-");
   try {
     mkdirSync(join(home, ".config", "llm-budget"), { recursive: true });
     writeFileSync(join(home, ".config", "llm-budget", "config.jsonc"), "{not-json");
@@ -242,7 +242,7 @@ test("§5 HTTP 401 blocks by default and names the fix", async () => {
 });
 
 test("§5 an active override survives unknown usage", async () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-override-"));
+  const home = tempHome("llm-budget-override-");
   try {
     setState(openDb(home), CURSOR_OVERRIDE_KEY, new Date(Date.now() + 60_000).toISOString());
     const response = await handleHook(
@@ -276,7 +276,7 @@ test("§5 null percent field does not block", async () => {
 });
 
 test("event-count backstop blocks when over threshold", async () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-events-"));
+  const home = tempHome("llm-budget-events-");
   try {
     const config = structuredClone(DEFAULT_CONFIG);
     config.rateLimit.maxEventsPerHour = 2;
@@ -318,7 +318,7 @@ test("event-count backstop blocks when over threshold", async () => {
 });
 
 test("override and except bypass both gates", async () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-bypass-"));
+  const home = tempHome("llm-budget-bypass-");
   try {
     const config = structuredClone(DEFAULT_CONFIG);
     config.quota.cursorModelsBlockAtPercent = 1;
@@ -353,7 +353,7 @@ test("override and except bypass both gates", async () => {
 });
 
 test("warnings fire once per threshold per billing cycle", async () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-warn-"));
+  const home = tempHome("llm-budget-warn-");
   try {
     const config = structuredClone(DEFAULT_CONFIG);
     config.quota.cursorModelsBlockAtPercent = 100;

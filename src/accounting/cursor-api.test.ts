@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rmSync } from "node:fs";
 import test from "node:test";
 import { openDb } from "../db/client.js";
+import { tempHome } from "../test-home.js";
 import {
   CursorApiError,
   CursorAuthError,
@@ -55,7 +54,7 @@ function sampleRawWithSpend(totalSpend: number) {
 }
 
 function withTempDb<T>(fn: (db: ReturnType<typeof openDb>, home: string) => Promise<T> | T): Promise<T> {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-api-"));
+  const home = tempHome("llm-budget-api-");
   const db = openDb(home);
   return Promise.resolve(fn(db, home)).finally(() => {
     rmSync(home, { recursive: true, force: true });

@@ -316,9 +316,9 @@ async function statusCommand(home = homedir()): Promise<string> {
     lines.push("");
     lines.push(agent === "claude" ? "Claude Code:" : "Codex:");
     if (agent === "claude") {
-      lines.push(`  Hooks: ${formatInstallState(claudeHooksInstalled(home))}`);
+      lines.push(`  Hooks: ${formatInstallState(claudeHooksInstalled(home), "llm-budget claude install")}`);
     } else {
-      lines.push(`  Shim: ${formatInstallState(codexShimInstalled(home))}`);
+      lines.push(`  Shim: ${formatInstallState(codexShimInstalled(home), "llm-budget codex install")}`);
     }
     if (!enabled) {
       lines.push("  disabled in config");
@@ -371,7 +371,7 @@ async function statusCommand(home = homedir()): Promise<string> {
   // Dashboard auth may be unavailable offline — render whatever it reports.
   lines.push("");
   lines.push("Cursor Agent:");
-  lines.push(`  Hooks: ${formatInstallState(cursorHooksInstalled(home))}`);
+  lines.push(`  Hooks: ${formatInstallState(cursorHooksInstalled(home), "llm-budget cursor install")}`);
   try {
     const raw = await cursorStatusCommand(home);
     const allLines = raw.split("\n");
@@ -451,8 +451,8 @@ function formatList(ids: string[]): string {
   return `Session exceptions (${ids.length}):\n${ids.map((id) => `  ${id}`).join("\n")}\n`;
 }
 
-function formatInstallState(installed: boolean): string {
-  return installed ? "installed" : "not installed — run llm-budget install";
+function formatInstallState(installed: boolean, installCommand: string): string {
+  return installed ? "installed" : `not installed — run ${installCommand}`;
 }
 
 function installAll(home = homedir()): string {

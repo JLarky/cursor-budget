@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { fetchClaudeUsage } from "./claude.js";
+import { tempHome } from "../../test-home.js";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -13,7 +13,7 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 function homeWithClaudeCreds(): string {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-claude-"));
+  const home = tempHome("llm-budget-claude-");
   mkdirSync(join(home, ".claude"), { recursive: true });
   writeFileSync(
     join(home, ".claude", ".credentials.json"),
@@ -52,7 +52,7 @@ test("fetchClaudeUsage maps 5h and weekly utilization windows", async () => {
 });
 
 test("fetchClaudeUsage is unavailable when Claude is not signed in", async () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-claude-none-"));
+  const home = tempHome("llm-budget-claude-none-");
   const usage = await fetchClaudeUsage({ home, platform: "linux", fetch: async () => {
     throw new Error("must not fetch without creds");
   } });
@@ -90,7 +90,7 @@ test("fetchClaudeUsage refreshes a file-backed token after 401", async () => {
 });
 
 test("fetchClaudeUsage does not refresh Keychain-backed tokens", async () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-claude-kc-"));
+  const home = tempHome("llm-budget-claude-kc-");
   let tokenCalls = 0;
   const usage = await fetchClaudeUsage({
     home,

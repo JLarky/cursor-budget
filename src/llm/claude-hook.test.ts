@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import {
@@ -10,6 +9,7 @@ import {
   parseClaudeHookInput,
 } from "./claude-hook.js";
 import { DEFAULT_CONFIG, type LlmConfig } from "./config.js";
+import { tempHome } from "../test-home.js";
 import type { UsageSnapshot } from "./usage/index.js";
 
 function baseConfig(overrides: Partial<LlmConfig["claudeCode"]> = {}): LlmConfig {
@@ -112,8 +112,7 @@ test("excluded sessions bypass every gate", async () => {
 });
 
 test("override bypasses gates", async () => {
-  const { mkdtempSync: mkHome } = await import("node:fs");
-  const home = mkHome(join(tmpdir(), "llm-budget-hook-"));
+  const home = tempHome("llm-budget-hook-");
   const { openLlmDb, setState } = await import("./db.js");
   setState(openLlmDb(home), "override_until", new Date(Date.now() + 3_600_000).toISOString());
   const over = claudeSnapshot([
@@ -129,7 +128,7 @@ test("override bypasses gates", async () => {
 
 test("broken config denies enforce events with a recoverable message", async () => {
   const { mkdirSync, writeFileSync } = await import("node:fs");
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-hook-cfg-"));
+  const home = tempHome("llm-budget-hook-cfg-");
   mkdirSync(join(home, ".config", "llm-budget"), { recursive: true });
   writeFileSync(join(home, ".config", "llm-budget", "config.jsonc"), "{ not json");
   const response = await handleClaudeHook(

@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { openLlmDb } from "../db.js";
 import { fetchDirectUsage, writeUsageCache } from "./index.js";
+import { tempHome } from "../../test-home.js";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -14,7 +14,7 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 function signedInHome(): string {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-usage-"));
+  const home = tempHome("llm-budget-usage-");
   mkdirSync(join(home, ".claude"), { recursive: true });
   mkdirSync(join(home, ".codex"), { recursive: true });
   writeFileSync(

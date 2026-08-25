@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+import { tempHome } from "../test-home.js";
 import { runCli } from "./cli-testkit.js";
 
 test("codex-guard fails closed when config is invalid", async () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-cli-"));
+  const home = tempHome("llm-budget-cli-");
   mkdirSync(join(home, ".config", "llm-budget"), { recursive: true });
   writeFileSync(join(home, ".config", "llm-budget", "config.jsonc"), "{ not json");
 
@@ -16,13 +16,13 @@ test("codex-guard fails closed when config is invalid", async () => {
 });
 
 test("codex-guard fails closed when Codex is not signed in", async () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-cli2-"));
+  const home = tempHome("llm-budget-cli2-");
   const result = await runCli(["codex-guard"], home);
   assert.equal(result.code, 2);
 });
 
 test("codex-guard allows when failClosed is off", async () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-cli-open-"));
+  const home = tempHome("llm-budget-cli-open-");
   mkdirSync(join(home, ".config", "llm-budget"), { recursive: true });
   writeFileSync(
     join(home, ".config", "llm-budget", "config.jsonc"),
@@ -34,7 +34,7 @@ test("codex-guard allows when failClosed is off", async () => {
 });
 
 test("status covers all three agents", { timeout: 60_000 }, async () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-cli3-"));
+  const home = tempHome("llm-budget-cli3-");
   const result = await runCli(["status"], home);
   assert.equal(result.code, 0);
   // `usage` is an alias of `status` and renders the same view.
@@ -44,20 +44,21 @@ test("status covers all three agents", { timeout: 60_000 }, async () => {
   assert.match(result.stdout, /Claude Code:/);
   assert.match(result.stdout, /Codex:/);
   assert.match(result.stdout, /Cursor Agent:/);
-  assert.match(result.stdout, /Claude Code:\n  Hooks: not installed — run llm-budget install/);
-  assert.match(result.stdout, /Codex:\n  Shim: not installed — run llm-budget install/);
-  assert.match(result.stdout, /Cursor Agent:\n  Hooks: not installed — run llm-budget install/);
+  assert.match(result.stdout, /Claude Code:\n  Hooks: not installed — run llm-budget claude install/);
+  assert.match(result.stdout, /Codex:\n  Shim: not installed — run llm-budget codex install/);
+  assert.match(result.stdout, /Cursor Agent:\n  Hooks: not installed — run llm-budget cursor install/);
   // Every agent block carries its own escape-hatch state.
   assert.equal(result.stdout.split("Override:").length - 1 >= 3, true);
   assert.doesNotMatch(result.stdout, /\(claude\+codex\)/);
 });
 
 test("install registers every provider and status then reports installed", { timeout: 60_000 }, async () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-cli-install-"));
+  const home = tempHome("llm-budget-cli-install-");
   const before = await runCli(["status"], home);
   assert.equal(before.code, 0);
-  assert.match(before.stdout, /Hooks: not installed — run llm-budget install/);
-  assert.match(before.stdout, /Shim: not installed — run llm-budget install/);
+  assert.match(before.stdout, /Hooks: not installed — run llm-budget claude install/);
+  assert.match(before.stdout, /Shim: not installed — run llm-budget codex install/);
+  assert.match(before.stdout, /Hooks: not installed — run llm-budget cursor install/);
 
   const installed = await runCli(["install"], home);
   assert.equal(installed.code, 0);
@@ -74,7 +75,7 @@ test("install registers every provider and status then reports installed", { tim
 });
 
 test("help lists three peer scopes and both override stores", async () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-cli-help-"));
+  const home = tempHome("llm-budget-cli-help-");
   const result = await runCli(["help"], home);
   assert.equal(result.code, 0);
   assert.match(result.stdout, /llm-budget install/);
