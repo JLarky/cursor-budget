@@ -14,9 +14,11 @@ export function llmBudgetDir(home = homedir()): string {
   return join(home, ".llm-budget");
 }
 
+/** Primary config: JSONC (comments + trailing commas allowed). */
 export function llmConfigPath(home = homedir()): string {
-  return join(llmBudgetDir(home), "config.json");
+  return join(llmBudgetDir(home), "config.jsonc");
 }
+
 
 
 export function llmDbPath(home = homedir()): string {

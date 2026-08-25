@@ -84,7 +84,7 @@ test("watchdog kills codex processes on every tripped pass, notifies once", asyn
 test("watchdog fails closed when config is unreadable", async () => {
   const home = mkdtempSync(join(tmpdir(), "llm-budget-wd-badcfg-"));
   mkdirSync(join(home, ".llm-budget"), { recursive: true });
-  writeFileSync(join(home, ".llm-budget", "config.json"), "{ not json");
+  writeFileSync(join(home, ".llm-budget", "config.jsonc"), "{ not json");
   const killed: number[] = [];
   const notified: string[] = [];
 

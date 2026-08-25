@@ -170,7 +170,7 @@ size + mtime, so re-checking between prompts only stats unchanged files.
 Percentages are against a budget you define — explicit, not implied:
 
 ```jsonc
-// ~/.llm-budget/config.json
+// ~/.llm-budget/config.jsonc — JSONC: comments and trailing commas are fine
 {
   "budget": {
     // Pick ONE:

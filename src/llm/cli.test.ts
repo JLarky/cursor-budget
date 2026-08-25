@@ -8,7 +8,7 @@ import { runCli } from "./cli-testkit.js";
 test("codex-guard fails closed when config is invalid", async () => {
   const home = mkdtempSync(join(tmpdir(), "llm-budget-cli-"));
   mkdirSync(join(home, ".llm-budget"), { recursive: true });
-  writeFileSync(join(home, ".llm-budget", "config.json"), "{ not json");
+  writeFileSync(join(home, ".llm-budget", "config.jsonc"), "{ not json");
 
   const result = await runCli(["codex-guard"], home);
   assert.equal(result.code, 2);
