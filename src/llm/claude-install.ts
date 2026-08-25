@@ -126,3 +126,21 @@ export function uninstallClaudeHooks(home = homedir()): string {
     ? `Removed llm-budget entries from ${removedFrom}\n`
     : "No llm-budget hook entries found.\n";
 }
+
+export function claudeHooksInstalled(home = homedir()): boolean {
+  const settingsPath = claudeSettingsPath(home);
+  if (!existsSync(settingsPath)) return false;
+  try {
+    const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown>;
+    const hooks =
+      typeof settings.hooks === "object" && settings.hooks !== null
+        ? (settings.hooks as Record<string, unknown>)
+        : {};
+    return CLAUDE_HOOK_EVENTS.every((event) => {
+      const groups = Array.isArray(hooks[event]) ? (hooks[event] as ClaudeHookGroup[]) : [];
+      return groups.some((group) => (group?.hooks ?? []).some(isLlmBudgetEntry));
+    });
+  } catch {
+    return false;
+  }
+}

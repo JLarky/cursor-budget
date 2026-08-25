@@ -1,4 +1,5 @@
 import * as v from "valibot";
+import { ConfigFileSchema } from "../config-schema.js";
 
 /**
  * Percent-only configuration: every gate compares a provider-reported
@@ -54,38 +55,6 @@ export const DEFAULT_CONFIG: LlmConfig = {
   },
   excludeSessionIds: [],
 };
-
-const percent0to100 = v.pipe(v.number(), v.minValue(0), v.maxValue(100));
-
-const ClaudeCodeSchema = v.strictObject({
-  enabled: v.optional(v.boolean()),
-  weeklyBlockAtPercent: v.optional(percent0to100),
-  rolling5hBlockAtPercent: v.optional(percent0to100),
-});
-
-const CodexSchema = v.strictObject({
-  enabled: v.optional(v.boolean()),
-  weeklyBlockAtPercent: v.optional(percent0to100),
-  // Null means "fall back to weeklyBlockAtPercent".
-  openAiWeeklyBlockAtPercent: v.optional(v.nullable(percent0to100)),
-});
-
-const ConfigFileSchema = v.strictObject({
-  $schema: v.optional(v.string()),
-  _comment: v.optional(v.string()),
-  claudeCode: v.optional(ClaudeCodeSchema),
-  codex: v.optional(CodexSchema),
-  enforcement: v.optional(
-    v.strictObject({ failClosed: v.optional(v.boolean()) }),
-  ),
-  excludeSessionIds: v.optional(v.array(v.pipe(v.string(), v.trim(), v.minLength(1)))),
-  // Cursor Agent keys in the shared file; ignored here.
-  cursor: v.optional(v.unknown()),
-  quota: v.optional(v.unknown()),
-  rateLimit: v.optional(v.unknown()),
-  warnings: v.optional(v.unknown()),
-  excludeConversationIds: v.optional(v.unknown()),
-});
 
 export class LlmConfigError extends Error {
   constructor(message: string) {

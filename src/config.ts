@@ -1,4 +1,5 @@
 import { renderUnifiedConfigFile } from "./config-render.js";
+import { ConfigFileSchema } from "./config-schema.js";
 import { DEFAULT_CONFIG as LLM_DEFAULT_CONFIG } from "./llm/config.js";
 import * as v from "valibot";
 
@@ -73,58 +74,6 @@ export const DEFAULT_CONFIG: Config = {
   },
   excludeConversationIds: [],
 };
-
-const finiteNumber = v.pipe(v.number(), v.finite());
-const nonNegativeFinite = v.pipe(v.number(), v.finite(), v.minValue(0));
-/** API / block thresholds: 0–100 percent of Cursor's quota meter. */
-const percent0to100 = v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(100));
-/** Warning fractions of the configured block threshold (0–1). */
-const warningFraction = v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(1));
-
-const QuotaSchema = v.strictObject({
-  cursorModelsBlockAtPercent: v.optional(percent0to100),
-  otherModelsBlockAtPercent: v.optional(percent0to100),
-  totalBlockAtPercent: v.optional(v.nullable(percent0to100)),
-  maxStaleMs: v.optional(nonNegativeFinite),
-  cacheTtlMs: v.optional(nonNegativeFinite),
-});
-
-const RateLimitSchema = v.strictObject({
-  maxEventsPerHour: v.optional(v.nullable(v.pipe(v.number(), v.finite(), v.minValue(0)))),
-});
-
-const CursorSliceSchema = v.strictObject({
-  quota: v.optional(QuotaSchema),
-  rateLimit: v.optional(RateLimitSchema),
-  warnings: v.optional(v.array(warningFraction)),
-  enforcement: v.optional(
-    v.strictObject({
-      failClosed: v.optional(v.boolean()),
-    }),
-  ),
-  excludeConversationIds: v.optional(v.array(v.string())),
-});
-
-const ConfigFileSchema = v.strictObject({
-  // Common hand-edit annotations; ignored at runtime.
-  $schema: v.optional(v.string()),
-  _comment: v.optional(v.string()),
-  // Peer agent keys in the shared ~/.config/llm-budget/config.jsonc.
-  claudeCode: v.optional(v.unknown()),
-  codex: v.optional(v.unknown()),
-  excludeSessionIds: v.optional(v.unknown()),
-  cursor: v.optional(CursorSliceSchema),
-  // Also accepted at the top level so writeConfig can round-trip a resolved Config.
-  quota: v.optional(QuotaSchema),
-  rateLimit: v.optional(RateLimitSchema),
-  warnings: v.optional(v.array(warningFraction)),
-  enforcement: v.optional(
-    v.strictObject({
-      failClosed: v.optional(v.boolean()),
-    }),
-  ),
-  excludeConversationIds: v.optional(v.array(v.string())),
-});
 
 export class ConfigError extends Error {
   constructor(message: string) {

@@ -92,3 +92,19 @@ exec "$NODE" ${JSON.stringify(cli)} cursor hook
     `  ${wrapper}`,
   ].join("\n") + "\n";
 }
+
+export function cursorHooksInstalled(home = homedir()): boolean {
+  const hooksPath = hooksJsonPath(home);
+  if (!existsSync(hooksPath) || !existsSync(hookWrapperPath(home))) return false;
+  try {
+    const hooks = JSON.parse(readFileSync(hooksPath, "utf8")) as {
+      hooks?: Record<string, unknown[]>;
+    };
+    return HOOK_EVENTS.every((event) => {
+      const list = Array.isArray(hooks.hooks?.[event]) ? hooks.hooks[event] : [];
+      return list.some(isLlmBudgetEntry);
+    });
+  } catch {
+    return false;
+  }
+}
