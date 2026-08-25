@@ -103,6 +103,7 @@ async function main(): Promise<void> {
       return;
     }
     case "status":
+    case "usage":
       process.stdout.write(await statusCommand());
       return;
     case "override":
@@ -238,6 +239,7 @@ const HELP = `llm-budget — usage guards for Cursor Agent, Claude Code, and Cod
 
 Usage:
   llm-budget status                     # Show combined status for all agents
+  llm-budget usage                      # Alias for status
   llm-budget override <duration>        # Temporarily bypass Claude and Codex gates
   llm-budget override off               # Clear the Claude and Codex override
   llm-budget except add <session-id>
@@ -348,17 +350,24 @@ async function statusCommand(home = homedir()): Promise<string> {
     const raw = await cursorStatusCommand(home);
     const allLines = raw.split("\n");
     const titleIdx = allLines.findIndex((l) => l.trim() === "llm-budget");
-    const body = (titleIdx >= 0 ? allLines.slice(titleIdx + 1) : allLines).filter(
-      (l, i) => !(i === 0 && l.trim() === ""),
-    );
+    const body = (titleIdx >= 0 ? allLines.slice(titleIdx + 1) : allLines)
+      .map((l) => {
+        // Collapse multi-line API/auth failure detail into one peer-style line
+        // so an offline Cursor does not visually dominate the output.
+        const m = l.match(/^\s*Period usage: unavailable \(([^)]*)\)\s*$/);
+        if (!m) return l;
+        const reason = m[1].split(":")[0].trim();
+        return "Dashboard quota: unavailable — sign in with cursor-agent";
+      })
+      .filter((l) => l.trim() !== "");
     if (body.length === 0) {
       lines.push("  no status available");
     } else {
-      for (const l of body) lines.push(l.trim() === "" ? "" : `  ${l}`);
+      for (const l of body) lines.push(`  ${l}`);
     }
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    lines.push(`  unavailable (${detail})`);
+    const detail = error instanceof Error ? error.message.split(":")[0] : String(error);
+    lines.push(`  Dashboard quota: unavailable (${detail}) — sign in with cursor-agent`);
   }
 
   return `${lines.join("\n")}\n`;

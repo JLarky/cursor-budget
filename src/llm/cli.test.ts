@@ -26,6 +26,10 @@ test("status covers all three agents", { timeout: 60_000 }, async () => {
   const home = mkdtempSync(join(tmpdir(), "llm-budget-cli3-"));
   const result = await runCli(["status"], home);
   assert.equal(result.code, 0);
+  // `usage` is an alias of `status` and renders the same view.
+  const alias = await runCli(["usage"], home);
+  assert.equal(alias.code, 0);
+  assert.match(alias.stdout, /Cursor Agent:/);
   assert.match(result.stdout, /Claude Code:/);
   assert.match(result.stdout, /Codex:/);
   assert.match(result.stdout, /Cursor Agent:/);
