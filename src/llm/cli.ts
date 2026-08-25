@@ -42,6 +42,12 @@ import { spendingCommand as cursorSpendingCommand } from "../commands/spending.j
 import { handleHook, readStdinJson } from "../hook.js";
 
 async function main(): Promise<void> {
+  // Piping into `head` and friends closes stdout early; exit quietly on EPIPE
+  // instead of dumping an unhandled-error stack after the user got their data.
+  process.stdout.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EPIPE") process.exit(0);
+    throw err;
+  });
   const [command, ...rest] = process.argv.slice(2);
   switch (command) {
     case "cursor":
@@ -127,10 +133,17 @@ async function main(): Promise<void> {
       process.stdout.write(importRatesCommand(src));
       return;
     }
+    case undefined:
+      // No arguments: show the live budget view up front; the help wall is
+      // one keystroke away.
+      process.stdout.write(await statusCommand());
+      process.stdout.write(
+        "\nRun \`llm-budget help\` for all commands and scopes.\n",
+      );
+      return;
     case "-h":
     case "--help":
     case "help":
-    case undefined:
       process.stdout.write(HELP);
       return;
     default:
@@ -256,9 +269,9 @@ Usage:
   llm-budget cursor help                # Show Cursor Agent guard commands
 
 Scopes:
-  claude  install/uninstall native Claude Code hooks (UserPromptSubmit, PreToolUse)
-  codex   install/uninstall the PATH shim; pair with watchdog
-  cursor  the original dashboard-API guard for Cursor Agent
+  claude  Claude Code guard — native hooks in ~/.claude/settings.json
+  codex   Codex guard — PATH shim + sidecar watchdog
+  cursor  Cursor Agent guard — dashboard API + hooks in ~/.cursor/hooks.json
 
 Weekly caps use a pinned UTC week (Monday 00:00). Percentages are against the
 budget denominator configured in ~/.llm-budget/config.json.
