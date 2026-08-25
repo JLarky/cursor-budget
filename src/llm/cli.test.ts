@@ -7,8 +7,8 @@ import { runCli } from "./cli-testkit.js";
 
 test("codex-guard fails closed when config is invalid", async () => {
   const home = mkdtempSync(join(tmpdir(), "llm-budget-cli-"));
-  mkdirSync(join(home, ".llm-budget"), { recursive: true });
-  writeFileSync(join(home, ".llm-budget", "config.jsonc"), "{ not json");
+  mkdirSync(join(home, ".config", "llm-budget"), { recursive: true });
+  writeFileSync(join(home, ".config", "llm-budget", "config.jsonc"), "{ not json");
 
   const result = await runCli(["codex-guard"], home);
   assert.equal(result.code, 2);
@@ -23,9 +23,9 @@ test("codex-guard fails closed when Codex is not signed in", async () => {
 
 test("codex-guard allows when failClosed is off", async () => {
   const home = mkdtempSync(join(tmpdir(), "llm-budget-cli-open-"));
-  mkdirSync(join(home, ".llm-budget"), { recursive: true });
+  mkdirSync(join(home, ".config", "llm-budget"), { recursive: true });
   writeFileSync(
-    join(home, ".llm-budget", "config.jsonc"),
+    join(home, ".config", "llm-budget", "config.jsonc"),
     '{ "enforcement": { "failClosed": false } }\n',
   );
   const result = await runCli(["codex-guard"], home);
@@ -61,4 +61,6 @@ test("help lists three peer scopes and both override stores", async () => {
   assert.doesNotMatch(result.stdout, /Shared commands \(Claude Code and Codex\)/);
   assert.doesNotMatch(result.stdout, /the original Cursor/);
   assert.doesNotMatch(result.stdout, /Paseo/);
+  assert.doesNotMatch(result.stdout, /\.cursor\/llm-budget/);
+  assert.match(result.stdout, /~\/\.config\/llm-budget/);
 });

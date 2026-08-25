@@ -6,7 +6,7 @@ import { ensureLlmConfig } from "./config.js";
 import { codexShimDir, codexShimPath } from "./paths.js";
 
 /**
- * Codex has no deny hooks, so enforcement is a PATH shim: `~/.llm-budget/bin/codex`
+ * Codex has no deny hooks, so enforcement is a PATH shim: `~/.local/share/llm-budget/bin/codex`
  * checks the budget first and only then execs the real binary. Users put the
  * shim dir ahead on their PATH (install prints the exact export line).
  *

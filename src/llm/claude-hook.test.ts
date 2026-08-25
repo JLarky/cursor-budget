@@ -130,8 +130,8 @@ test("override bypasses gates", async () => {
 test("broken config denies enforce events with a recoverable message", async () => {
   const { mkdirSync, writeFileSync } = await import("node:fs");
   const home = mkdtempSync(join(tmpdir(), "llm-budget-hook-cfg-"));
-  mkdirSync(join(home, ".llm-budget"), { recursive: true });
-  writeFileSync(join(home, ".llm-budget", "config.jsonc"), "{ not json");
+  mkdirSync(join(home, ".config", "llm-budget"), { recursive: true });
+  writeFileSync(join(home, ".config", "llm-budget", "config.jsonc"), "{ not json");
   const response = await handleClaudeHook(
     { hook_event_name: "UserPromptSubmit", session_id: "s-1" },
     { home },

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -20,11 +20,27 @@ test("empty object uses defaults", () => {
   assert.deepEqual(config.warnings, DEFAULT_CONFIG.warnings);
 });
 
-test("rejects unknown top-level fields (including removed legacy keys)", () => {
+test("rejects unknown top-level fields", () => {
   assert.throws(
     () => parseConfig({ limits: { rollingHour: { usd: 1 } } }),
     (error: unknown) => error instanceof ConfigError && /Invalid config\.json/.test(error.message),
   );
+});
+
+test("accepts Claude Code / Codex keys in the shared file", () => {
+  const config = parseConfig({
+    claudeCode: { weeklyBlockAtPercent: 24 },
+    quota: { cursorModelsBlockAtPercent: 80 },
+  });
+  assert.equal(config.quota.cursorModelsBlockAtPercent, 80);
+});
+
+test("nested cursor slice wins over top-level quota", () => {
+  const config = parseConfig({
+    quota: { cursorModelsBlockAtPercent: 10 },
+    cursor: { quota: { cursorModelsBlockAtPercent: 80 } },
+  });
+  assert.equal(config.quota.cursorModelsBlockAtPercent, 80);
 });
 
 test("allows $schema and _comment annotations", () => {
@@ -125,6 +141,25 @@ test("writeConfig keeps the documented template after mutation", () => {
     assert.match(text, /"excludeConversationIds": \["sess-1"\]/);
     const reparsed = parseConfig(JSON.parse(stripJsoncComments(text)));
     assert.deepEqual(reparsed.excludeConversationIds, ["sess-1"]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("writeConfig does not clobber Claude Code keys in the shared file", () => {
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-noclobber-"));
+  try {
+    mkdirSync(join(home, ".config", "llm-budget"), { recursive: true });
+    writeFileSync(
+      join(home, ".config", "llm-budget", "config.jsonc"),
+      `{ "claudeCode": { "weeklyBlockAtPercent": 24 }, "quota": { "cursorModelsBlockAtPercent": 90 } }\n`,
+    );
+    const config = ensureConfig(home);
+    config.excludeConversationIds = ["sess-cursor"];
+    writeConfig(config, home);
+    const text = readFileSync(configPath(home), "utf8");
+    assert.match(text, /"weeklyBlockAtPercent": 24/);
+    assert.match(text, /"excludeConversationIds": \["sess-cursor"\]/);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

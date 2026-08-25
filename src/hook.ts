@@ -17,7 +17,7 @@ import {
 import { rollingHour } from "./budget/windows.js";
 import type { Config } from "./config.js";
 import { ensureConfig } from "./config.js";
-import { getState, hasWarning, markWarning, openDb } from "./db/client.js";
+import { getCursorOverride, hasWarning, markWarning, openDb } from "./db/client.js";
 import { notify } from "./notify.js";
 
 const ENFORCE_EVENTS = new Set([
@@ -216,7 +216,7 @@ function isAuthFailure(error: unknown): boolean {
 }
 
 function readOverrideUntil(home?: string): Date | null {
-  const raw = getState(openDb(home), "override_until");
+  const raw = getCursorOverride(openDb(home));
   if (!raw) return null;
   const date = new Date(raw);
   return Number.isNaN(date.getTime()) ? null : date;

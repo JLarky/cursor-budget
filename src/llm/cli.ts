@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
-import { join } from "node:path";
 import { formatBudgetBlockMessage, formatPercent } from "./budget/evaluator.js";
 import { parseDuration } from "./budget/windows.js";
 import {
@@ -12,6 +11,7 @@ import {
 import { installClaudeHooks, uninstallClaudeHooks } from "./claude-install.js";
 import {
   ensureLlmConfig,
+  formatSharedConfigFile,
   loadLlmConfigForRead,
   writeLlmConfig,
 } from "./config.js";
@@ -24,7 +24,7 @@ import {
   providerUsage,
   type UsageSnapshot,
 } from "./usage/index.js";
-// Cursor Agent scope — same binary, own store (dashboard API + ~/.cursor/llm-budget).
+// Cursor Agent scope — dashboard API; config lives in ~/.config/llm-budget with the other agents.
 import { exceptCommand as cursorExceptCommand } from "../commands/except.js";
 import { historyCommand as cursorHistoryCommand } from "../commands/history.js";
 import { installCommand as cursorInstallCommand } from "../commands/install.js";
@@ -124,8 +124,7 @@ async function main(): Promise<void> {
       process.stdout.write(exceptCommand(rest));
       return;
     case "config": {
-      const { config, warning } = loadLlmConfigForRead();
-      process.stdout.write(`${warning ?? ""}${JSON.stringify(config, null, 2)}\n`);
+      process.stdout.write(formatSharedConfigFile());
       return;
     }
     case undefined:
@@ -275,9 +274,9 @@ Scopes \u2014 every agent supports: install | uninstall | help
   llm-budget codex help         Codex CLI \u2014 PATH shim + sidecar watchdog
   llm-budget cursor help        Cursor Agent \u2014 dashboard API + ~/.cursor/hooks.json
 
-Claude Code and Codex share ~/.llm-budget/ (override, except, config).
-Cursor Agent uses the same verbs under \`llm-budget cursor ...\` because its
-dashboard state lives in ~/.cursor/llm-budget/.
+Claude Code, Codex, and Cursor Agent share ~/.config/llm-budget/config.jsonc.
+Override and exceptions stay per-scope so unblocking one agent does not
+unblock another.
 
   llm-budget override <duration>         Bypass Claude Code + Codex gates
   llm-budget cursor override <duration>  Bypass Cursor Agent gates
@@ -358,9 +357,8 @@ async function statusCommand(home = homedir()): Promise<string> {
     lines.push("  On unknown usage: block (failClosed)");
   }
 
-  // Cursor Agent is a peer of Claude Code and Codex in this view. Dashboard
-  // state lives in ~/.cursor/llm-budget and may be unavailable offline —
-  // render whatever it reports, indented like the other agents.
+  // Cursor Agent is a peer of Claude Code and Codex in this view.
+  // Dashboard auth may be unavailable offline — render whatever it reports.
   lines.push("");
   lines.push("Cursor Agent:");
   try {

@@ -1,28 +1,17 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { configPath, dataDir, dbPath } from "../paths.js";
 
-/**
- * State root for Claude Code and Codex.
- *
- * Cursor Agent keeps dashboard state in `~/.cursor/llm-budget` because that
- * config schema is strict (unknown keys throw) — sharing one file would
- * brick one agent the moment the other's keys appeared. Override and
- * exception state are per-store on purpose too: unblocking one agent must
- * not silently unblock another.
- */
 export function llmBudgetDir(home = homedir()): string {
-  return join(home, ".llm-budget");
+  return dataDir(home);
 }
 
-/** Primary config: JSONC (comments + trailing commas allowed). */
 export function llmConfigPath(home = homedir()): string {
-  return join(llmBudgetDir(home), "config.jsonc");
+  return configPath(home);
 }
-
-
 
 export function llmDbPath(home = homedir()): string {
-  return join(llmBudgetDir(home), "usage.sqlite3");
+  return dbPath(home);
 }
 
 export function claudeSettingsPath(home = homedir()): string {
@@ -30,11 +19,11 @@ export function claudeSettingsPath(home = homedir()): string {
 }
 
 export function claudeHookWrapperPath(home = homedir()): string {
-  return join(llmBudgetDir(home), "bin", "claude-hook");
+  return join(dataDir(home), "bin", "claude-hook");
 }
 
 export function codexShimDir(home = homedir()): string {
-  return join(llmBudgetDir(home), "bin");
+  return join(dataDir(home), "bin");
 }
 
 /** Installed as a `codex` entrypoint; put this dir first on PATH. */

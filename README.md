@@ -68,8 +68,8 @@ billed, and blocking it would only make Claude keep working.
 Codex has no deny hooks, so enforcement is layered:
 
 ```sh
-llm-budget codex install                # writes ~/.llm-budget/bin/codex shim
-export PATH="$HOME/.llm-budget/bin:$PATH"   # put it in your shell profile
+llm-budget codex install                # writes ~/.local/share/llm-budget/bin/codex shim
+export PATH="$HOME/.local/share/llm-budget/bin:$PATH"   # put it in your shell profile
 llm-budget watchdog                     # sidecar poller (default interval 15s)
 ```
 
@@ -135,7 +135,7 @@ expired token means the guard starts blocking.
 
 ## Configuration
 
-### Claude Code & Codex — `~/.llm-budget/config.jsonc`
+One file for every agent: `~/.config/llm-budget/config.jsonc`.
 
 Only overrides are stored; defaults live in code. All keys optional.
 
@@ -150,36 +150,27 @@ Only overrides are stored; defaults live in code. All keys optional.
     "enabled": true,
     "weeklyBlockAtPercent": 80
   },
+  "cursor": {
+    "quota": {
+      "cursorModelsBlockAtPercent": 90,  // "Cursor Models" meter, 0-100
+      "otherModelsBlockAtPercent": 90,   // "Other Models" meter, 0-100
+      "totalBlockAtPercent": null,       // optional overall gate
+      "maxStaleMs": 3600000,             // older snapshot => usage unknown
+      "cacheTtlMs": 90000                // before trying the network again
+    },
+    "rateLimit": { "maxEventsPerHour": 500 },
+    "warnings": [0.5, 0.75, 0.9],        // fractions of the block threshold, 0-1
+    "excludeConversationIds": []
+  },
   "enforcement": { "failClosed": true },
   "excludeSessionIds": []
 }
 ```
 
 Percentages come from the vendor usage APIs (Claude Code's local OAuth
-creds, Codex `auth.json`). Each gate blocks when usage reaches its
-threshold. If usage cannot be determined the guards block under the default
-`failClosed: true`.
-
-### Cursor Agent — `~/.cursor/llm-budget/config.jsonc`
-
-Separate file on purpose: this schema is strict, so sharing `~/.llm-budget`
-would brick one agent the moment the other's keys appeared.
-
-```jsonc
-{
-  "quota": {
-    "cursorModelsBlockAtPercent": 90,  // "Cursor Models" meter, 0-100
-    "otherModelsBlockAtPercent": 90,   // "Other Models" meter, 0-100
-    "totalBlockAtPercent": null,       // optional overall gate
-    "maxStaleMs": 3600000,             // older snapshot => usage unknown
-    "cacheTtlMs": 90000                // before trying the network again
-  },
-  "rateLimit": { "maxEventsPerHour": 500 },
-  "warnings": [0.5, 0.75, 0.9],        // fractions of the block threshold, 0-1
-  "enforcement": { "failClosed": true },
-  "excludeConversationIds": []
-}
-```
+creds, Codex `auth.json`, Cursor dashboard). Each gate blocks when usage
+reaches its threshold. If usage cannot be determined the guards block under
+the default `failClosed: true`.
 
 Warnings fire as desktop notifications once per threshold per billing cycle.
 
@@ -203,9 +194,9 @@ Every agent supports `install | uninstall | help` under its scope.
 | `llm-budget cursor uninstall [--purge-data]` | remove Cursor Agent hooks |
 | `llm-budget watchdog [--interval <duration>] [--once]` | stop running Codex sessions on trip |
 
-Claude Code and Codex share `~/.llm-budget/`. Cursor Agent uses the same
-verbs under `llm-budget cursor ...` because its dashboard state lives in
-`~/.cursor/llm-budget/`.
+Claude Code, Codex, and Cursor Agent share `~/.config/llm-budget/config.jsonc`.
+Cursor Agent still uses `llm-budget cursor ...` for dashboard-specific
+commands, and its hooks still register in `~/.cursor/hooks.json`.
 
 | Claude Code + Codex | Cursor Agent | |
 |---|---|---|
