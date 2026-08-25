@@ -72,7 +72,7 @@ async function watchdogPass(
   try {
     decision = deps.decide
       ? deps.decide()
-      : runGuard("codex", ensureLlmConfig(home), { home, now });
+      : await runGuard("codex", ensureLlmConfig(home), { now });
   } catch (error) {
     const lenient = loadLlmConfigForRead(home).config.enforcement.failClosed === false;
     if (!lenient) {

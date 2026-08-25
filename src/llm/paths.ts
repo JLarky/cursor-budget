@@ -18,10 +18,6 @@ export function llmConfigPath(home = homedir()): string {
   return join(llmBudgetDir(home), "config.json");
 }
 
-/** Optional rate table (`import-rates` writes it; hand-editing works too). */
-export function ratesPath(home = homedir()): string {
-  return join(llmBudgetDir(home), "rates.json");
-}
 
 export function llmDbPath(home = homedir()): string {
   return join(llmBudgetDir(home), "usage.sqlite3");
@@ -42,12 +38,4 @@ export function codexShimDir(home = homedir()): string {
 /** Installed as a `codex` entrypoint; put this dir first on PATH. */
 export function codexShimPath(home = homedir()): string {
   return join(codexShimDir(home), "codex");
-}
-
-export function claudeTranscriptRoots(home = homedir()): string[] {
-  return [join(home, ".claude", "projects")];
-}
-
-export function codexTranscriptRoots(home = homedir()): string[] {
-  return [join(home, ".codex", "sessions"), join(home, ".codex", "archived_sessions")];
 }

@@ -7,16 +7,9 @@ import { DEFAULT_CONFIG, type LlmConfig } from "./config.js";
 import { openLlmDb, getState } from "./db.js";
 import { runWatchdog } from "./codex-watchdog.js";
 
-function blockedConfig(): LlmConfig {
-  const config = structuredClone(DEFAULT_CONFIG);
-  config.budget.denominator = { kind: "tokens", weeklyTokens: 100 };
-  return config;
-}
-
-function okConfig(): LlmConfig {
-  const config = structuredClone(DEFAULT_CONFIG);
-  config.budget.denominator = { kind: "tokens", weeklyTokens: 1_000_000 };
-  return config;
+// Decisions are injected, so one config serves both tripped and clear passes.
+function anyConfig(): LlmConfig {
+  return structuredClone(DEFAULT_CONFIG);
 }
 
 test("watchdog kills codex processes on every tripped pass, notifies once", async () => {
@@ -42,7 +35,7 @@ test("watchdog kills codex processes on every tripped pass, notifies once", asyn
       excluded: false,
     },
     sessionId: "",
-    config: decideBlock ? blockedConfig() : okConfig(),
+    config: anyConfig(),
   });
 
   const runPass = () =>

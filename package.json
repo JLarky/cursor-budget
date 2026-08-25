@@ -25,6 +25,7 @@
     "node": ">=22.5.0"
   },
   "dependencies": {
+    "@getpaseo/client": "^0.5.2",
     "valibot": "^1.4.2"
   },
   "devDependencies": {

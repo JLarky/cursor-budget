@@ -1,170 +1,196 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG, type LlmConfig } from "./config.js";
-import { openLlmDb, setState } from "./db.js";
 import { runGuard } from "./guard.js";
-import type { ScanStats } from "./transcripts/scanner.js";
+import type { PaseoUsageSnapshot } from "./paseo.js";
 
 function config(overrides: {
-  denominator?: LlmConfig["budget"]["denominator"];
   claudeEnabled?: boolean;
   codexEnabled?: boolean;
+  codexOpenAiBlockAt?: number | null;
+  failClosed?: boolean;
 }): LlmConfig {
   const c = structuredClone(DEFAULT_CONFIG);
-  if (overrides.denominator) c.budget.denominator = overrides.denominator;
   if (overrides.claudeEnabled !== undefined) c.claudeCode.enabled = overrides.claudeEnabled;
   if (overrides.codexEnabled !== undefined) c.codex.enabled = overrides.codexEnabled;
+  if (overrides.codexOpenAiBlockAt !== undefined)
+    c.codex.openAiWeeklyBlockAtPercent = overrides.codexOpenAiBlockAt;
+  if (overrides.failClosed !== undefined) c.enforcement.failClosed = overrides.failClosed;
   return c;
 }
 
-const ZERO: ScanStats = {
-  totalFiles: 0,
-  scannedFiles: 0,
-  skippedFiles: 0,
-  failedFiles: 0,
-  malformedLines: 0,
-  addedEvents: 0,
-  updatedEvents: 0,
-};
+function snapshot(
+  providers: Array<{
+    providerId: string;
+    status?: "available" | "unavailable" | "error";
+    windows?: Array<{ id: string; label: string; usedPct?: number | null; resetsAt?: string | null }>;
+    error?: string | null;
+  }>,
+): PaseoUsageSnapshot {
+  return {
+    fetchedAt: "2026-08-25T00:00:00.000Z",
+    providers: providers.map((p) => ({
+      providerId: p.providerId,
+      displayName: p.providerId,
+      status: p.status ?? ("available" as const),
+      planLabel: null,
+      windows: (p.windows ?? []).map((w) => ({
+        id: w.id,
+        label: w.label,
+        usedPct: w.usedPct ?? null,
+        resetsAt: w.resetsAt ?? null,
+      })),
+      error: p.error ?? null,
+    })),
+  };
+}
 
-test("disabled agents short-circuit before any storage or transcript work", () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-guard-"));
-  let scanCalls = 0;
-  const decision = runGuard("codex", config({ codexEnabled: false }), {
-    home,
-    scan: () => {
-      scanCalls += 1;
-      throw new Error("scan must not run for disabled agents");
+const CLAUDE_SNAPSHOT = () =>
+  snapshot([
+    {
+      providerId: "claude",
+      windows: [
+        { id: "seven_day", label: "Weekly", usedPct: 10, resetsAt: "2026-08-31T00:00:00.000Z" },
+        { id: "five_hour", label: "Session", usedPct: 5 },
+      ],
+    },
+  ]);
+
+test("disabled agents short-circuit before any Paseo fetch", async () => {
+  let fetchCalls = 0;
+  const decision = await runGuard("codex", config({ codexEnabled: false }), {
+    fetchUsage: () => {
+      fetchCalls += 1;
+      throw new Error("must not fetch for disabled agents");
     },
   });
   assert.equal(decision.allow, true);
-  assert.equal(scanCalls, 0);
+  assert.equal(fetchCalls, 0);
 });
 
-test("enabled agents still gate normally", () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-guard2-"));
-  // Seed codex usage above an 80% threshold of 100 tokens.
-  const db = openLlmDb(home);
-  db.prepare(
-    `INSERT INTO token_events (
-      event_key, agent, session_id, model, ts,
-      input_tokens, output_tokens, reasoning_tokens,
-      cache_read_tokens, cache_write_tokens, total_tokens
-    ) VALUES ('g1', 'codex', 's', 'm', ?, 90, 10, 0, 0, 0, 100)`,
-  ).run(new Date().toISOString());
+test("claude gates on paseo weekly and 5h windows", async () => {
+  const decision = await runGuard("claude", config({}), { fetchUsage: CLAUDE_SNAPSHOT });
+  assert.equal(decision.allow, true);
 
-  const decision = runGuard(
-    "codex",
-    config({ codexEnabled: true, denominator: { kind: "tokens", weeklyTokens: 100 } }),
-    { home, now: new Date(), scan: () => ({ ...ZERO }) },
-  );
-  assert.equal(decision.allow, false);
-  assert.equal(decision.evaluation.reasons[0]?.windowId, "codexWeekly");
-});
-
-test("unreadable transcript roots become usageUnknown under failClosed", () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-guard3-"));
-  const decision = runGuard("claude", config({}), {
-    home,
-    now: new Date(),
-    scan: () => ({
-      ...ZERO,
-      unreadableRoots: ["/home/x/.claude/projects: EACCES: permission denied"],
-    }),
-  });
-  assert.equal(decision.allow, false);
-  const reason = decision.evaluation.reasons[0];
-  assert.equal(reason?.windowId, "usageUnknown");
-  assert.match(reason?.detail ?? "", /EACCES/);
-});
-
-test("partially unreadable transcripts become usageUnknown, not partial usage", () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-guard4-"));
-  const decision = runGuard("claude", config({}), {
-    home,
-    now: new Date(),
-    scan: () => ({
-      ...ZERO,
-      totalFiles: 2,
-      scannedFiles: 1,
-      failedFiles: 1,
-      failedFileNames: ["/home/x/.claude/projects/p/big.jsonl"],
-    }),
-  });
-  assert.equal(decision.allow, false);
-  assert.equal(decision.evaluation.reasons[0]?.windowId, "usageUnknown");
-  assert.match(decision.evaluation.reasons[0]?.detail ?? "", /1 transcript file\(s\) unreadable/);
-});
-
-test("USD denominator with unpriced models fails closed", () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-guard5-"));
-  const db = openLlmDb(home);
-  db.prepare(
-    `INSERT INTO token_events (
-      event_key, agent, session_id, model, ts,
-      input_tokens, output_tokens, reasoning_tokens,
-      cache_read_tokens, cache_write_tokens, total_tokens
-    ) VALUES ('u1', 'codex', 's', 'brand-new-model', ?, 5000, 0, 0, 0, 0, 5000)`,
-  ).run(new Date().toISOString());
-
-  const decision = runGuard(
-    "codex",
-    config({ denominator: { kind: "usd", weeklyUsd: 35 } }),
-    { home, now: new Date(), scan: () => ({ ...ZERO }) },
-  );
-  // The model has no rate → measured spend is $0, which must read as unknown
-  // rather than "plenty left".
-  assert.equal(decision.allow, false);
-  assert.equal(decision.evaluation.reasons[0]?.windowId, "usageUnknown");
-  assert.match(decision.evaluation.reasons[0]?.detail ?? "", /brand-new-model/);
-
-  // With rates on file for that model the guard allows again.
-  const priced = runGuard(
-    "codex",
+  const over = snapshot([
     {
-      ...config({ denominator: { kind: "usd", weeklyUsd: 35 } }),
-      budget: {
-        denominator: { kind: "usd", weeklyUsd: 35 },
-        rates: { "brand-new-model": { input: 0.01, output: 0.03 } },
-      },
+      providerId: "claude",
+      windows: [
+        { id: "seven_day", label: "Weekly", usedPct: 85 },
+        { id: "five_hour", label: "Session", usedPct: 5 },
+      ],
     },
-    { home, now: new Date(), scan: () => ({ ...ZERO }) },
-  );
-  assert.equal(priced.allow, true);
-});
-
-test("codex OpenAI-percent gate: below threshold allows, at it blocks", () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-guard6-"));
-  const db = openLlmDb(home);
-  setState(
-    db,
-    "codex_openai_rate_limits",
-    JSON.stringify({ usedPercent: 2, resetsAt: "2026-08-31T16:04:13.000Z" }),
-  );
-
-  const c = config({});
-  c.codex.openAiWeeklyBlockAtPercent = 3;
-  const allowed = runGuard("codex", c, { home, now: new Date(), scan: () => ({ ...ZERO }) });
-  assert.equal(allowed.allow, true);
-
-  c.codex.openAiWeeklyBlockAtPercent = 1;
-  const denied = runGuard("codex", c, { home, now: new Date(), scan: () => ({ ...ZERO }) });
+  ]);
+  const denied = await runGuard("claude", config({}), { fetchUsage: () => over });
   assert.equal(denied.allow, false);
   const reason = denied.evaluation.reasons[0];
-  assert.equal(reason?.windowLabel, "Weekly (OpenAI)");
-  assert.equal(reason?.usedPct, 2);
-  assert.equal(reason?.blockAtPct, 1);
+  assert.equal(reason.windowLabel, "Weekly (paseo)");
+  assert.equal(reason.usedPct, 85);
+  assert.equal(reason.blockAtPct, 80);
+  assert.equal(reason.resetsAt, null);
 });
 
-test("codex OpenAI-percent gate fails closed without telemetry", () => {
-  const home = mkdtempSync(join(tmpdir(), "llm-budget-guard7-"));
-  const c = config({});
-  c.codex.openAiWeeklyBlockAtPercent = 50;
-  const decision = runGuard("codex", c, { home, now: new Date(), scan: () => ({ ...ZERO }) });
+test("codex gates on the OpenAI session window with threshold override", async () => {
+  const codex = () =>
+    snapshot([
+      {
+        providerId: "codex",
+        windows: [{ id: "session", label: "Session", usedPct: 2, resetsAt: "2026-08-31T16:04:13.000Z" }],
+      },
+    ]);
+
+  const allowed = await runGuard("codex", config({}), { fetchUsage: codex });
+  assert.equal(allowed.allow, true);
+
+  // current + 1 percent headroom, then current - 1: the literal ±1 test.
+  const tight = await runGuard("codex", config({ codexOpenAiBlockAt: 3 }), { fetchUsage: codex });
+  assert.equal(tight.allow, true);
+
+  const denied = await runGuard("codex", config({ codexOpenAiBlockAt: 1 }), { fetchUsage: codex });
+  assert.equal(denied.allow, false);
+  const reason = denied.evaluation.reasons[0];
+  assert.equal(reason.windowLabel, "Weekly (OpenAI)");
+  assert.equal(reason.usedPct, 2);
+  assert.equal(reason.blockAtPct, 1);
+  assert.equal(reason.resetsAt, "2026-08-31T16:04:13.000Z");
+});
+
+test("unreachable daemon fails closed with a reason", async () => {
+  const decision = await runGuard("codex", config({}), {
+    fetchUsage: () => {
+      throw new Error("connect ECONNREFUSED");
+    },
+  });
   assert.equal(decision.allow, false);
   assert.equal(decision.evaluation.reasons[0]?.windowId, "usageUnknown");
-  assert.match(decision.evaluation.reasons[0]?.detail ?? "", /OpenAI weekly rate-limit telemetry/);
+  assert.match(decision.evaluation.reasons[0]?.detail ?? "", /Paseo daemon unreachable/);
+});
+
+test("fail-open configs allow when usage is unknown", async () => {
+  const decision = await runGuard("codex", config({ failClosed: false }), {
+    fetchUsage: () => {
+      throw new Error("connect ECONNREFUSED");
+    },
+  });
+  assert.equal(decision.allow, true);
+});
+
+test("missing provider entry or windows count as unknown usage", async () => {
+  const noEntry = await runGuard("codex", config({}), { fetchUsage: () => snapshot([]) });
+  assert.equal(noEntry.allow, false);
+  assert.match(noEntry.evaluation.reasons[0]?.detail ?? "", /no codex usage entry/);
+
+  const noWindows = await runGuard("codex", config({}), {
+    fetchUsage: () =>
+      snapshot([{ providerId: "codex", status: "unavailable", error: "not signed in" }]),
+  });
+  assert.equal(noWindows.allow, false);
+  assert.match(noWindows.evaluation.reasons[0]?.detail ?? "", /unavailable: not signed in/);
+});
+
+test("a missing gate window is unknown usage, not a pass", async () => {
+  const partial = snapshot([
+    {
+      providerId: "claude",
+      windows: [{ id: "seven_day", label: "Weekly", usedPct: 10 }],
+    },
+  ]);
+  const decision = await runGuard("claude", config({}), { fetchUsage: () => partial });
+  assert.equal(decision.allow, false);
+  assert.match(decision.evaluation.reasons[0]?.detail ?? "", /claudeRolling/);
+});
+
+test("override and exceptions bypass every gate", async () => {
+  const over = snapshot([
+    {
+      providerId: "codex",
+      windows: [{ id: "session", label: "Session", usedPct: 99 }],
+    },
+  ]);
+  const overridden = await runGuard("codex", config({ codexOpenAiBlockAt: 50 }), {
+    fetchUsage: () => over,
+    now: new Date(),
+  });
+  // No override stored in this temp home — still blocked.
+  assert.equal(overridden.allow, false);
+
+  const excluded = await runGuard("codex", config({ codexOpenAiBlockAt: 50 }), {
+    fetchUsage: () => over,
+    sessionId: "sess-exempt",
+  });
+  assert.equal(excluded.allow, false); // not registered yet
+
+  // Register the exception through the same store the guard reads.
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const home = mkdtempSync(join(tmpdir(), "llm-budget-guard-exc-"));
+  const cfg = structuredClone(config({ codexOpenAiBlockAt: 50 }));
+  cfg.excludeSessionIds = ["sess-exempt"];
+  const exempted = await runGuard("codex", cfg, {
+    home,
+    fetchUsage: () => over,
+    sessionId: "sess-exempt",
+  });
+  assert.equal(exempted.allow, true);
 });

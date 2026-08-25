@@ -6,6 +6,7 @@ import {
   type GuardDecision,
 } from "./guard.js";
 
+
 /**
  * Claude Code hook events the guard enforces on.
  *
@@ -42,10 +43,10 @@ export interface ClaudeHookDeps extends GuardDeps {
  * events with an escape-hatch message; guard failures become usageUnknown
  * blocks under failClosed; exceptions and overrides short-circuit first.
  */
-export function handleClaudeHook(
+export async function handleClaudeHook(
   event: ClaudeHookEvent,
   deps: ClaudeHookDeps = {},
-): ClaudeHookResponse {
+): Promise<ClaudeHookResponse> {
   const eventName = String(event.hook_event_name ?? "");
   const sessionId = String(event.session_id ?? "");
   const base: ClaudeHookResponse = { block: false, eventName, sessionId };
@@ -77,7 +78,7 @@ export function handleClaudeHook(
 
   let decision: GuardDecision;
   try {
-    decision = runGuard("claude", config, { ...deps, sessionId });
+    decision = await runGuard("claude", config, { ...deps, sessionId });
   } catch (error) {
     // Belt-and-braces: runGuard already converts expected failures into
     // decisions; anything escaping here still fails closed on enforce events.
