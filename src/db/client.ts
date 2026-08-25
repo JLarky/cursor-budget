@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { dbPath } from "../paths.js";
 import { SCHEMA_SQL } from "./schema.js";
+import { CURSOR_OVERRIDE_KEY } from "./keys.js";
 
 export interface UsageRow {
   timestamp: string;
@@ -26,6 +27,14 @@ export function openDb(home?: string): DatabaseSync {
   db.exec(SCHEMA_SQL);
   if (!home) cached = db;
   return db;
+}
+
+export function getCursorOverride(db: DatabaseSync): string | null {
+  return getState(db, CURSOR_OVERRIDE_KEY);
+}
+
+export function setCursorOverride(db: DatabaseSync, value: string): void {
+  setState(db, CURSOR_OVERRIDE_KEY, value);
 }
 
 export function withImmediate<T>(db: DatabaseSync, fn: () => T): T {

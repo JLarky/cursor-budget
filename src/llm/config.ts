@@ -1,9 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { parseJsonc } from "../jsonc.js";
-import { homedir } from "node:os";
-import { dirname } from "node:path";
 import * as v from "valibot";
-import { llmConfigPath } from "./paths.js";
 
 /**
  * Percent-only configuration: every gate compares a provider-reported
@@ -84,6 +79,12 @@ const ConfigFileSchema = v.strictObject({
     v.strictObject({ failClosed: v.optional(v.boolean()) }),
   ),
   excludeSessionIds: v.optional(v.array(v.pipe(v.string(), v.trim(), v.minLength(1)))),
+  // Cursor Agent keys in the shared file; ignored here.
+  cursor: v.optional(v.unknown()),
+  quota: v.optional(v.unknown()),
+  rateLimit: v.optional(v.unknown()),
+  warnings: v.optional(v.unknown()),
+  excludeConversationIds: v.optional(v.unknown()),
 });
 
 export class LlmConfigError extends Error {
@@ -132,36 +133,9 @@ export function parseLlmConfig(raw: unknown): LlmConfig {
 }
 
 
-function loadRawConfig(home?: string): unknown {
-  const path = llmConfigPath(home);
-  if (!existsSync(path)) return {};
-  try {
-    return parseJsonc(readFileSync(path, "utf8"));
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new LlmConfigError(`Cannot read ${path}: ${detail}`);
-  }
-}
-
-/** Lenient read: falls back to defaults when the file is missing or broken. */
-export function loadLlmConfigForRead(home?: string): {
-  config: LlmConfig;
-  warning: string | null;
-} {
-  try {
-    return { config: parseLlmConfig(loadRawConfig(home)), warning: null };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return {
-      config: structuredClone(DEFAULT_CONFIG),
-      warning: `Warning: ${detail}\nWarning: using default percent gates until config.jsonc is fixed\n`,
-    };
-  }
-}
-
 /**
- * Render a fully-documented config.jsonc. Every supported field appears with
- * an explanation and its effective value, so the file doubles as schema docs.
+ * Render Claude Code / Codex fields for unit tests. Disk writes use
+ * `renderUnifiedConfigFile` so Cursor Agent keys in the shared file survive.
  */
 export function renderLlmConfigFile(c: LlmConfig): string {
   const pct = (v: number) => `${v}`;
@@ -199,22 +173,5 @@ export function renderLlmConfigFile(c: LlmConfig): string {
 `;
 }
 
-/** Strict read: throws on a missing/broken file. For enforcing paths. */
-export function ensureLlmConfig(home?: string): LlmConfig {
-  const path = llmConfigPath(home);
-  mkdirSync(dirname(path), { recursive: true });
-  if (!existsSync(path)) {
-    // First run: give users a fully-documented starting point.
-    writeFileSync(path, renderLlmConfigFile(DEFAULT_CONFIG));
-    return DEFAULT_CONFIG;
-  }
-  return parseLlmConfig(loadRawConfig(home));
-}
-
-/** Persist a fully-resolved config in documented template form. */
-export function writeLlmConfig(config: LlmConfig, home?: string): void {
-  const path = llmConfigPath(home);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, renderLlmConfigFile(config));
-}
+export { ensureLlmConfig, formatSharedConfigFile, loadLlmConfigForRead, writeLlmConfig } from "../unified-config.js";
 

@@ -6,7 +6,7 @@ import {
 } from "../budget/evaluator.js";
 import { rollingHour } from "../budget/windows.js";
 import { loadConfigForRead } from "../config.js";
-import { getState, openDb } from "../db/client.js";
+import { getCursorOverride, openDb } from "../db/client.js";
 import { configPath } from "../paths.js";
 
 function formatAuthExpiry(expiry: Date | null, now: Date): string {
@@ -52,7 +52,7 @@ export async function statusCommand(home?: string): Promise<string> {
     periodLines = [`Period usage: unavailable (${detail})`];
   }
 
-  const overrideRaw = getState(openDb(home), "override_until");
+  const overrideRaw = getCursorOverride(openDb(home));
   const overrideUntil = overrideRaw ? new Date(overrideRaw) : null;
   const overrideActive = overrideUntil && overrideUntil.getTime() > now.getTime();
   const maxEvents = config.rateLimit.maxEventsPerHour;

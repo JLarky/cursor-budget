@@ -44,7 +44,7 @@ test("invalid values are rejected with a clear error", () => {
   assert.throws(() => parseLlmConfig({ codex: { openAiWeeklyBlockAtPercent: -1 } }), LlmConfigError);
   // Unknown keys stay rejected (strict schema).
   assert.throws(() => parseLlmConfig({ budget: { denominator: {} } }), LlmConfigError);
-  assert.throws(() => parseLlmConfig({ quota: {} }), LlmConfigError);
+  assert.doesNotThrow(() => parseLlmConfig({ quota: {}, cursor: { quota: {} } }));
 });
 
 test("jsonc: comments and trailing commas parse", () => {
@@ -68,7 +68,7 @@ test("first run writes a documented config.jsonc with every field", () => {
   const home = mkdtempSync(join(tmpdir(), "llm-budget-cfg-"));
   const config = ensureLlmConfig(home);
   assert.deepEqual(config, DEFAULT_CONFIG);
-  const path = join(home, ".llm-budget", "config.jsonc");
+  const path = join(home, ".config", "llm-budget", "config.jsonc");
   assert.equal(existsSync(path), true);
   const text = readFileSync(path, "utf8");
   for (const field of [

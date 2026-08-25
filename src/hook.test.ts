@@ -9,6 +9,7 @@ import {
   type CursorPeriodUsageResult,
 } from "./accounting/cursor-api.js";
 import { DEFAULT_CONFIG } from "./config.js";
+import { CURSOR_OVERRIDE_KEY } from "./db/keys.js";
 import { hasWarning, openDb, setState } from "./db/client.js";
 import { handleHook, resolvePeriodUsage } from "./hook.js";
 
@@ -71,9 +72,9 @@ function fakeResult(
 test("invalid config.jsonc denies enforce events instead of failing open", async () => {
   const home = mkdtempSync(join(tmpdir(), "llm-budget-hook-"));
   try {
-    mkdirSync(join(home, ".cursor", "llm-budget"), { recursive: true });
+    mkdirSync(join(home, ".config", "llm-budget"), { recursive: true });
     writeFileSync(
-      join(home, ".cursor", "llm-budget", "config.jsonc"),
+      join(home, ".config", "llm-budget", "config.jsonc"),
       `${JSON.stringify({
         quota: { cursorModelsBlockAtPercent: "ninety" },
       })}\n`,
@@ -98,8 +99,8 @@ test("invalid config.jsonc denies enforce events instead of failing open", async
 test("invalid config.jsonc still allows non-enforce record events", async () => {
   const home = mkdtempSync(join(tmpdir(), "llm-budget-hook-rec-"));
   try {
-    mkdirSync(join(home, ".cursor", "llm-budget"), { recursive: true });
-    writeFileSync(join(home, ".cursor", "llm-budget", "config.jsonc"), "{not-json");
+    mkdirSync(join(home, ".config", "llm-budget"), { recursive: true });
+    writeFileSync(join(home, ".config", "llm-budget", "config.jsonc"), "{not-json");
     const response = await handleHook(
       {
         hook_event_name: "afterAgentThought",
@@ -243,7 +244,7 @@ test("§5 HTTP 401 blocks by default and names the fix", async () => {
 test("§5 an active override survives unknown usage", async () => {
   const home = mkdtempSync(join(tmpdir(), "llm-budget-override-"));
   try {
-    setState(openDb(home), "override_until", new Date(Date.now() + 60_000).toISOString());
+    setState(openDb(home), CURSOR_OVERRIDE_KEY, new Date(Date.now() + 60_000).toISOString());
     const response = await handleHook(
       { hook_event_name: "preToolUse", conversation_id: "sess-override" },
       structuredClone(DEFAULT_CONFIG),
@@ -339,7 +340,7 @@ test("override and except bypass both gates", async () => {
     const db = openDb(home);
     db.prepare(
       "INSERT INTO app_state(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-    ).run("override_until", new Date(Date.now() + 60_000).toISOString());
+    ).run(CURSOR_OVERRIDE_KEY, new Date(Date.now() + 60_000).toISOString());
     const overrideResp = await handleHook(
       { hook_event_name: "preToolUse", conversation_id: "sess-over" },
       config,

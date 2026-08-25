@@ -1,6 +1,9 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { budgetDir, hookWrapperPath, hooksJsonPath } from "../paths.js";
+import { PERIOD_USAGE_CACHE_KEY } from "../accounting/cursor-api.js";
+import { DEFAULT_CONFIG, writeConfig } from "../config.js";
+import { openDb, setCursorOverride, setState } from "../db/client.js";
+import { hookWrapperPath, hooksJsonPath } from "../paths.js";
 
 export function uninstallCommand(purgeData: boolean, home = homedir()): string {
   const hooksPath = hooksJsonPath(home);
@@ -24,10 +27,15 @@ export function uninstallCommand(purgeData: boolean, home = homedir()): string {
 
   const lines = ["Removed llm-budget Cursor Agent hook entries and wrapper."];
   if (purgeData) {
-    rmSync(budgetDir(home), { recursive: true, force: true });
-    lines.push("Purged ~/.cursor/llm-budget/");
+    writeConfig(structuredClone(DEFAULT_CONFIG), home);
+    const db = openDb(home);
+    setCursorOverride(db, "");
+    setState(db, PERIOD_USAGE_CACHE_KEY, "");
+    db.exec("DELETE FROM usage_events");
+    db.exec("DELETE FROM warning_emissions");
+    lines.push("Removed Cursor Agent data from the shared store; Claude Code and Codex config kept.");
   } else {
-    lines.push("Kept usage data in ~/.cursor/llm-budget/");
+    lines.push("Kept Cursor Agent data in the shared store.");
   }
   return `${lines.join("\n")}\n`;
 }

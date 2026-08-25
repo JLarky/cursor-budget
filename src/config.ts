@@ -1,8 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { parseJsonc } from "./jsonc.js";
-import { dirname } from "node:path";
+import { renderUnifiedConfigFile } from "./config-render.js";
+import { DEFAULT_CONFIG as LLM_DEFAULT_CONFIG } from "./llm/config.js";
 import * as v from "valibot";
-import { budgetDir, configPath } from "./paths.js";
 
 export interface QuotaConfig {
   /**
@@ -95,10 +93,28 @@ const RateLimitSchema = v.strictObject({
   maxEventsPerHour: v.optional(v.nullable(v.pipe(v.number(), v.finite(), v.minValue(0)))),
 });
 
+const CursorSliceSchema = v.strictObject({
+  quota: v.optional(QuotaSchema),
+  rateLimit: v.optional(RateLimitSchema),
+  warnings: v.optional(v.array(warningFraction)),
+  enforcement: v.optional(
+    v.strictObject({
+      failClosed: v.optional(v.boolean()),
+    }),
+  ),
+  excludeConversationIds: v.optional(v.array(v.string())),
+});
+
 const ConfigFileSchema = v.strictObject({
   // Common hand-edit annotations; ignored at runtime.
   $schema: v.optional(v.string()),
   _comment: v.optional(v.string()),
+  // Peer agent keys in the shared ~/.config/llm-budget/config.jsonc.
+  claudeCode: v.optional(v.unknown()),
+  codex: v.optional(v.unknown()),
+  excludeSessionIds: v.optional(v.unknown()),
+  cursor: v.optional(CursorSliceSchema),
+  // Also accepted at the top level so writeConfig can round-trip a resolved Config.
   quota: v.optional(QuotaSchema),
   rateLimit: v.optional(RateLimitSchema),
   warnings: v.optional(v.array(warningFraction)),
@@ -117,12 +133,6 @@ export class ConfigError extends Error {
   }
 }
 
-function withConfigPath(path: string, detail: string): ConfigError {
-  return new ConfigError(
-    `${detail}\nConfig file: ${path}\nDelete this file to regenerate defaults.`,
-  );
-}
-
 export function parseConfig(raw: unknown): Config {
   let parsed: v.InferOutput<typeof ConfigFileSchema>;
   try {
@@ -134,118 +144,48 @@ export function parseConfig(raw: unknown): Config {
     throw error;
   }
 
+  const slice = parsed.cursor;
+  const quota = slice?.quota ?? parsed.quota;
+  const rateLimit = slice?.rateLimit ?? parsed.rateLimit;
+  const warnings = slice?.warnings ?? parsed.warnings;
+  const enforcement = slice?.enforcement ?? parsed.enforcement;
+  const excludeConversationIds =
+    slice?.excludeConversationIds ?? parsed.excludeConversationIds;
+
   return {
     quota: {
       cursorModelsBlockAtPercent:
-        parsed.quota?.cursorModelsBlockAtPercent ?? DEFAULT_CONFIG.quota.cursorModelsBlockAtPercent,
+        quota?.cursorModelsBlockAtPercent ?? DEFAULT_CONFIG.quota.cursorModelsBlockAtPercent,
       otherModelsBlockAtPercent:
-        parsed.quota?.otherModelsBlockAtPercent ?? DEFAULT_CONFIG.quota.otherModelsBlockAtPercent,
+        quota?.otherModelsBlockAtPercent ?? DEFAULT_CONFIG.quota.otherModelsBlockAtPercent,
       totalBlockAtPercent:
-        parsed.quota?.totalBlockAtPercent === undefined
+        quota?.totalBlockAtPercent === undefined
           ? DEFAULT_CONFIG.quota.totalBlockAtPercent
-          : parsed.quota.totalBlockAtPercent,
-      maxStaleMs: parsed.quota?.maxStaleMs ?? DEFAULT_CONFIG.quota.maxStaleMs,
-      cacheTtlMs: parsed.quota?.cacheTtlMs ?? DEFAULT_CONFIG.quota.cacheTtlMs,
+          : quota.totalBlockAtPercent,
+      maxStaleMs: quota?.maxStaleMs ?? DEFAULT_CONFIG.quota.maxStaleMs,
+      cacheTtlMs: quota?.cacheTtlMs ?? DEFAULT_CONFIG.quota.cacheTtlMs,
     },
     rateLimit: {
       maxEventsPerHour:
-        parsed.rateLimit?.maxEventsPerHour === undefined
+        rateLimit?.maxEventsPerHour === undefined
           ? DEFAULT_CONFIG.rateLimit.maxEventsPerHour
-          : parsed.rateLimit.maxEventsPerHour,
+          : rateLimit.maxEventsPerHour,
     },
-    warnings: parsed.warnings ?? DEFAULT_CONFIG.warnings,
+    warnings: warnings ?? DEFAULT_CONFIG.warnings,
     enforcement: {
-      failClosed: parsed.enforcement?.failClosed ?? DEFAULT_CONFIG.enforcement.failClosed,
+      failClosed: enforcement?.failClosed ?? DEFAULT_CONFIG.enforcement.failClosed,
     },
-    excludeConversationIds: parsed.excludeConversationIds ?? [],
+    excludeConversationIds: excludeConversationIds ?? [],
   };
 }
 
 /**
  * Render a fully-documented config.jsonc so the file doubles as schema docs.
- * Every supported field appears with its current value and an explanation.
+ * Cursor Agent keys sit under `cursor`; Claude Code and Codex use defaults
+ * here so a Cursor-only rewrite still leaves a valid shared file.
  */
 export function renderConfigFile(c: Config): string {
-  const warnings = c.warnings.map((w) => `${w}`).join(", ");
-  return `// llm-budget configuration \u2014 JSONC, so comments and
-// trailing commas are fine. Every field is listed with its current value;
-// delete a field to fall back to its noted default.
-{
-  "quota": {
-    // Block when the dashboard "Cursor Models" meter reaches this % (0-100).
-    "cursorModelsBlockAtPercent": ${c.quota.cursorModelsBlockAtPercent},
-    // Block when the dashboard "Other Models" meter reaches this % (0-100).
-    "otherModelsBlockAtPercent": ${c.quota.otherModelsBlockAtPercent},
-    // Optional block on the combined "total" meter; null disables.
-    "totalBlockAtPercent": ${c.quota.totalBlockAtPercent === null ? "null" : c.quota.totalBlockAtPercent},
-    // Beyond this age (ms) a cached snapshot is treated as unknown usage.
-    "maxStaleMs": ${c.quota.maxStaleMs},
-    // Soft TTL (ms) for the local snapshot cache before a network refresh.
-    "cacheTtlMs": ${c.quota.cacheTtlMs}
-  },
-  "rateLimit": {
-    // Runaway-loop backstop: max hook events per rolling hour; null disables.
-    "maxEventsPerHour": ${c.rateLimit.maxEventsPerHour === null ? "null" : c.rateLimit.maxEventsPerHour}
-  },
-  // Warning fractions (0-1) of each quota block threshold.
-  "warnings": [${warnings}],
-  "enforcement": {
-    // When usage cannot be determined, block instead of allow.
-    "failClosed": ${c.enforcement.failClosed}
-  },
-  // Conversation ids that bypass every gate.
-  "excludeConversationIds": [${c.excludeConversationIds.map((id) => JSON.stringify(id)).join(", ")}]
-}
-`;
+  return renderUnifiedConfigFile(structuredClone(LLM_DEFAULT_CONFIG), c);
 }
 
-export function ensureConfig(home?: string): Config {
-  const path = configPath(home);
-  mkdirSync(dirname(path), { recursive: true });
-  mkdirSync(budgetDir(home), { recursive: true });
-  if (!existsSync(path)) {
-    // First run: a fully-documented file teaches the schema.
-    writeFileSync(path, renderConfigFile(DEFAULT_CONFIG));
-    return structuredClone(DEFAULT_CONFIG);
-  }
-  const text = readFileSync(path, "utf8");
-  if (!text.trim()) {
-    return parseConfig({});
-  }
-  let raw: unknown;
-  try {
-    raw = parseJsonc(text);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw withConfigPath(path, `Invalid config.jsonc (not JSONC): ${detail}`);
-  }
-  try {
-    return parseConfig(raw);
-  } catch (error) {
-    if (error instanceof ConfigError) {
-      throw withConfigPath(path, error.message);
-    }
-    throw error;
-  }
-}
-
-/** For read-only CLI commands: never brick recovery on a bad file. */
-export function loadConfigForRead(home?: string): { config: Config; warning?: string } {
-  try {
-    return { config: ensureConfig(home) };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return {
-      config: structuredClone(DEFAULT_CONFIG),
-      warning: `Warning: using defaults because config failed to load.\n${detail}`,
-    };
-  }
-}
-
-/** Persist a fully-resolved config in documented template form. */
-export function writeConfig(config: Config, home?: string): void {
-  const path = configPath(home);
-  mkdirSync(dirname(path), { recursive: true });
-  const validated = parseConfig(config);
-  writeFileSync(path, renderConfigFile(validated));
-}
+export { ensureConfig, loadConfigForRead, writeConfig } from "./unified-config.js";

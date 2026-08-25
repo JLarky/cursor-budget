@@ -1,8 +1,14 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export function budgetDir(home = homedir()): string {
-  return join(home, ".cursor", "llm-budget");
+/** XDG config dir: `~/.config/llm-budget`. */
+export function configDir(home = homedir()): string {
+  return join(home, ".config", "llm-budget");
+}
+
+/** SQLite, Claude hook wrapper, Codex PATH shim. */
+export function dataDir(home = homedir()): string {
+  return join(home, ".local", "share", "llm-budget");
 }
 
 /** Cursor Agent CLI session file (`accessToken` / `refreshToken`). */
@@ -11,11 +17,11 @@ export function cliAuthPath(home = homedir()): string {
 }
 
 export function configPath(home = homedir()): string {
-  return join(budgetDir(home), "config.jsonc");
+  return join(configDir(home), "config.jsonc");
 }
 
 export function dbPath(home = homedir()): string {
-  return join(budgetDir(home), "usage.sqlite3");
+  return join(dataDir(home), "usage.sqlite3");
 }
 
 export function hooksJsonPath(home = homedir()): string {
