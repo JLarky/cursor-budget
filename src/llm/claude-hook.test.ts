@@ -54,7 +54,7 @@ test("enforce set covers the two registered hook events only", () => {
 test("allows when usage is below both thresholds", async () => {
   const response = await handleClaudeHook(
     { hook_event_name: "UserPromptSubmit", session_id: "s-1" },
-    { fetchUsage: UNDER_THRESHOLD },
+    { fetchUsage: UNDER_THRESHOLD, config: baseConfig() },
   );
   assert.equal(response.block, false);
 });
@@ -66,7 +66,7 @@ test("blocks UserPromptSubmit past the weekly threshold with escape hatches", as
   ]);
   const response = await handleClaudeHook(
     { hook_event_name: "UserPromptSubmit", session_id: "sess-1234" },
-    { fetchUsage: over },
+    { fetchUsage: over, config: baseConfig() },
   );
   assert.equal(response.block, true);
   assert.match(response.message ?? "", /Claude Code blocked by llm-budget/);
@@ -82,7 +82,7 @@ test("rolling 5h window blocks independently of the weekly gate", async () => {
   ]);
   const response = await handleClaudeHook(
     { hook_event_name: "PreToolUse", session_id: "s-1" },
-    { fetchUsage: rollingOver },
+    { fetchUsage: rollingOver, config: baseConfig() },
   );
   assert.equal(response.block, true);
   assert.match(response.message ?? "", /Rolling 5h \(paseo\) budget reached/);
@@ -172,7 +172,7 @@ test("hook event without session id still formats a usable block message", async
   ]);
   const response = await handleClaudeHook(
     { hook_event_name: "UserPromptSubmit" },
-    { fetchUsage: over },
+    { fetchUsage: over, config: baseConfig() },
   );
   assert.equal(response.block, true);
   assert.match(response.message ?? "", /except add unknown/);
