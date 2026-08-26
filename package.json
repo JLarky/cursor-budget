@@ -19,6 +19,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "lint": "oxlint",
     "test": "tsc && node --test 'dist/**/*.test.js'"
   },
   "engines": {
@@ -36,7 +37,9 @@
     "valibot": "^1.4.2"
   },
   "devDependencies": {
+    "@oxlint/plugins": "^1.80.0",
     "@types/node": "^24.3.0",
+    "oxlint": "^1.80.0",
     "typescript": "^5.9.2"
   },
   "files": [
