@@ -72,8 +72,12 @@ llm-budget codex install                # writes ~/.codex/hooks.json
 ```
 
 Native `UserPromptSubmit` and `PreToolUse` hooks deny with stderr and exit 2.
-The PATH shim is an optional startup belt for older Codex versions; the
-watchdog is legacy and is never installed automatically.
+After installation, Codex's startup hook review must trust the hooks before
+they execute; until that interactive review is completed, hooks are
+`untrusted` and Codex will skip them (including in `codex exec`). The status
+output calls this out. The PATH shim is an optional startup belt for older
+Codex versions or automation that cannot perform the review; the watchdog is
+legacy and is never installed automatically.
 
 **Known gaps:** Codex `UserPromptSubmit` historically fails open if a hook
 crashes or times out, so `failClosed` cannot make Codex itself fail closed.

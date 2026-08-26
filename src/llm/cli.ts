@@ -17,7 +17,7 @@ import {
 } from "./config.js";
 import { runWatchdog } from "./codex-watchdog.js";
 import { installCodexHooks, uninstallCodexHooks, codexHooksInstalled } from "./codex-install.js";
-import { installCodexShim, codexShimInstalled } from "./codex-shim.js";
+import { installCodexShim, uninstallCodexShim, codexShimInstalled } from "./codex-shim.js";
 import { handleCodexHook, readCodexHookEvent, CodexHookInputError, type CodexHookEvent } from "./codex-hook.js";
 import { getState, openLlmDb, setState } from "./db.js";
 import { runGuard } from "./guard.js";
@@ -80,8 +80,12 @@ async function main(): Promise<void> {
         process.stdout.write(`${installCodexHooks()}\n`);
         return;
       }
+      if (sub === "shim-install") {
+        process.stdout.write(`${installCodexShim()}\n`);
+        return;
+      }
       if (sub === "uninstall") {
-        process.stdout.write(uninstallCodexHooks());
+        process.stdout.write(`${uninstallCodexHooks()}${uninstallCodexShim()}`);
         return;
       }
       if (sub === "hook") {
@@ -276,8 +280,9 @@ const CODEX_SCOPE_HELP = `llm-budget codex \u2014 Codex guard
 
 Commands:
   llm-budget codex install      Register native UserPromptSubmit + PreToolUse hooks
-  llm-budget codex uninstall    Remove native hooks
+  llm-budget codex uninstall    Remove native hooks and optional shim
   llm-budget codex hook         Used by installed hooks
+  llm-budget codex shim-install Install the optional PATH startup shim
   llm-budget codex help         This text
 
 Optional legacy startup belt:
@@ -336,8 +341,13 @@ async function statusCommand(home = homedir()): Promise<string> {
     if (agent === "claude") {
       lines.push(`  Hooks: ${formatInstallState(claudeHooksInstalled(home), "llm-budget claude install")}`);
     } else {
-      lines.push(`  Shim: ${formatInstallState(codexShimInstalled(home), "llm-budget codex install")}`);
+      lines.push(
+        `  Shim: ${codexShimInstalled(home) ? "installed" : "not installed — run llm-budget codex install (or codex shim-install)"}`,
+      );
       lines.push(`  Hooks: ${formatInstallState(codexHooksInstalled(home), "llm-budget codex install")}`);
+      if (codexHooksInstalled(home)) {
+        lines.push("  Trust: approve hooks in Codex startup review before they can run");
+      }
     }
     if (!enabled) {
       lines.push("  disabled in config");
