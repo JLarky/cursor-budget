@@ -155,26 +155,48 @@ function buildMeasurements(
     return measurements;
   }
 
+  const measurements: WindowMeasurement[] = [];
+  const blockAtPct = effectiveCodexBlockAt(config);
+
   const session = window("session");
-  if (!session) return [];
-  return [
-    {
+  if (session) {
+    measurements.push({
+      windowId: "codexSession",
+      label: "Session (OpenAI 5h)",
+      usedPct: session.usedPct ?? Number.NaN,
+      blockAtPct,
+      usedDisplay: pctDisplay(session.usedPct),
+      denomDisplay: "OpenAI 5h limit",
+      resetsAt: session.resetsAt,
+    });
+  }
+
+  const weekly = window("weekly");
+  if (weekly) {
+    measurements.push({
       windowId: "codexWeekly",
       label: "Weekly (OpenAI)",
-      usedPct: session.usedPct ?? Number.NaN,
-      blockAtPct: effectiveCodexBlockAt(config),
-      usedDisplay: pctDisplay(session.usedPct),
+      usedPct: weekly.usedPct ?? Number.NaN,
+      blockAtPct,
+      usedDisplay: pctDisplay(weekly.usedPct),
       denomDisplay: "OpenAI weekly limit",
-      resetsAt: session.resetsAt,
-    },
-  ];
+      resetsAt: weekly.resetsAt,
+    });
+  }
+
+  return measurements;
 }
 
 /** Every configured gate must have a measurement, else usage is unknown. */
 function missingGates(agent: GuardAgent, measurements: WindowMeasurement[]): string | null {
   const present = new Set(measurements.map((m) => m.windowId));
-  const needed: WindowMeasurement["windowId"][] =
-    agent === "claude" ? ["claudeWeekly", "claudeRolling"] : ["codexWeekly"];
+  let needed: WindowMeasurement["windowId"][] = [];
+  if (agent === "claude") {
+    needed = ["claudeWeekly", "claudeRolling"];
+  } else {
+    // For codex: weekly is required, session is optional (include both if available)
+    needed = ["codexWeekly"];
+  }
   const missing = needed.filter((id) => !present.has(id));
   if (missing.length === 0) return null;
   return `Usage API did not report the ${missing.join(", ")} window(s) for ${agent}`;

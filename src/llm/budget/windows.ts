@@ -5,6 +5,7 @@
 export type BudgetWindowId =
   | "claudeWeekly"
   | "claudeRolling"
+  | "codexSession"
   | "codexWeekly"
   | "usageUnknown";
 
