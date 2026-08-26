@@ -104,6 +104,7 @@ export async function runGuard(
     failClosed: config.enforcement.failClosed,
     usageUnknownReason,
   });
+  evaluation.displayMeasurements = measurements;
 
   return {
     allow: evaluation.allow,
@@ -165,6 +166,7 @@ function buildMeasurements(
       label: "Session (OpenAI 5h)",
       usedPct: session.usedPct ?? Number.NaN,
       blockAtPct,
+      enforce: false,
       usedDisplay: pctDisplay(session.usedPct),
       denomDisplay: "OpenAI 5h limit",
       resetsAt: session.resetsAt,

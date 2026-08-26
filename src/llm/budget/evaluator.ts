@@ -8,6 +8,8 @@ export interface WindowMeasurement {
   usedPct: number;
   /** Block threshold in the same scale. */
   blockAtPct: number;
+  /** Informational measurements do not participate in enforcement. */
+  enforce?: boolean;
   usedDisplay: string;
   denomDisplay: string;
   resetsAt?: string | null;
@@ -28,6 +30,7 @@ export interface BudgetBlockReason {
 export interface BudgetEvaluation {
   allow: boolean;
   reasons: BudgetBlockReason[];
+  displayMeasurements?: WindowMeasurement[];
   overrideActive: boolean;
   excluded: boolean;
 }
@@ -57,7 +60,7 @@ export function evaluateBudget(input: {
 
   const reasons: BudgetBlockReason[] = [];
   for (const m of input.measurements) {
-    if (Number.isFinite(m.usedPct) && m.usedPct >= m.blockAtPct) {
+    if (m.enforce !== false && Number.isFinite(m.usedPct) && m.usedPct >= m.blockAtPct) {
       reasons.push({
         windowId: m.windowId,
         windowLabel: m.label,
@@ -113,6 +116,15 @@ export function formatBudgetBlockMessage(
         `  ${primary.usedDisplay} / ${primary.denomDisplay}`,
       );
       if (primary.resetsAt) lines.push(`  Resets: ${primary.resetsAt}`);
+      const informational = (evaluation.displayMeasurements ?? []).filter(
+        (m) => m.enforce === false && m.windowId !== primary.windowId,
+      );
+      for (const m of informational) {
+        lines.push("");
+        lines.push(`${m.label}:`);
+        lines.push(`  ${m.usedDisplay} / ${m.denomDisplay}`);
+        if (m.resetsAt) lines.push(`  Resets: ${m.resetsAt}`);
+      }
     }
     lines.push("");
   }
