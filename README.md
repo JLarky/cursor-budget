@@ -79,6 +79,10 @@ output calls this out. The PATH shim is an optional startup belt for older
 Codex versions or automation that cannot perform the review; the watchdog is
 legacy and is never installed automatically.
 
+To verify a hook in non-interactive CI, use Codex's explicit trust override:
+`codex exec --dangerously-bypass-hook-trust "hi"`. A blocked run prints
+`hook: UserPromptSubmit Blocked` before any model request.
+
 **Known gaps:** Codex `UserPromptSubmit` historically fails open if a hook
 crashes or times out, so `failClosed` cannot make Codex itself fail closed.
 `PreToolUse` is Bash-first and file/MCP tools may not fire; `UserPromptSubmit`
