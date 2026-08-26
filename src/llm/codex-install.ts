@@ -20,18 +20,31 @@ interface CodexHookInfo {
   trustStatus?: string;
 }
 
-function readOwnedKeys(home: string): string[] {
+interface OwnedState {
+  key: string;
+  trusted_hash: string;
+}
+
+function readOwnedState(home: string): OwnedState[] {
   try {
-    const value = JSON.parse(readFileSync(codexHookStatePath(home), "utf8")) as { keys?: unknown };
-    return Array.isArray(value.keys) ? value.keys.filter((key): key is string => typeof key === "string") : [];
+    const value = JSON.parse(readFileSync(codexHookStatePath(home), "utf8")) as { state?: unknown };
+    return Array.isArray(value.state)
+      ? value.state.filter(
+          (entry): entry is OwnedState =>
+            typeof entry === "object" &&
+            entry !== null &&
+            typeof (entry as OwnedState).key === "string" &&
+            typeof (entry as OwnedState).trusted_hash === "string",
+        )
+      : [];
   } catch {
     return [];
   }
 }
 
-function writeOwnedKeys(home: string, keys: string[]): void {
+function writeOwnedState(home: string, state: OwnedState[]): void {
   mkdirSync(dirname(codexHookStatePath(home)), { recursive: true });
-  writeFileSync(codexHookStatePath(home), `${JSON.stringify({ keys }, null, 2)}\n`);
+  writeFileSync(codexHookStatePath(home), `${JSON.stringify({ state }, null, 2)}\n`);
 }
 
 function listCodexHooks(home: string): CodexHookInfo[] {
@@ -75,22 +88,25 @@ function trustCodexHooks(home: string, wrapper: string): string {
     ? config.hooks as Record<string, unknown> : {});
   const state = (typeof hooks.state === "object" && hooks.state !== null
     ? hooks.state as Record<string, unknown> : {});
-  const liveByKey = new Map(listed.flatMap((hook) => hook.key ? [[hook.key, hook] as const] : []));
-  for (const key of readOwnedKeys(home)) {
-    const live = liveByKey.get(key);
-    if (!live || live.command === wrapper) delete state[key];
+  const priorState = readOwnedState(home);
+  for (const prior of priorState) {
+    const current = state[prior.key];
+    if (current === undefined || (current && typeof current === "object" &&
+        (current as { trusted_hash?: unknown }).trusted_hash === prior.trusted_hash)) {
+      delete state[prior.key];
+    }
   }
-  const ownedKeys: string[] = [];
+  const ownedState: OwnedState[] = [];
   for (const hook of ours) {
     state[hook.key!] = { enabled: true, trusted_hash: hook.currentHash };
-    ownedKeys.push(hook.key!);
+    ownedState.push({ key: hook.key!, trusted_hash: hook.currentHash! });
   }
 
   hooks.state = state;
   config.hooks = hooks;
   mkdirSync(dirname(configPath), { recursive: true });
   writeFileSync(configPath, stringifyToml(config));
-  writeOwnedKeys(home, ownedKeys);
+  writeOwnedState(home, ownedState);
   return `Trusted ${ours.length} Codex hook(s)`;
 }
 
@@ -158,6 +174,7 @@ exec "$NODE" ${JSON.stringify(cli)} codex hook
     "",
     "Restart any running Codex sessions so they pick up hooks.json.",
     trust,
+    "Note: updating config.toml may rewrite its comments.",
     "",
     "The PATH shim remains an optional startup belt for older Codex versions.",
   ].join("\n");
@@ -165,8 +182,7 @@ exec "$NODE" ${JSON.stringify(cli)} codex hook
 export function uninstallCodexHooks(home = homedir()): string {
   const path = codexHooksPath(home);
   const wrapper = codexHookWrapperPath(home);
-  const ownedKeys = new Set(readOwnedKeys(home));
-  const installedHooks = listCodexHooks(home);
+  const ownedState = readOwnedState(home);
   let config: Record<string, unknown> = {};
   if (existsSync(path)) {
     try {
@@ -188,11 +204,6 @@ export function uninstallCodexHooks(home = homedir()): string {
           changed = true;
           for (const hook of group?.hooks ?? []) {
             if (owned(hook, wrapper)) {
-              for (const installed of installedHooks) {
-                if (installed.command === (hook as { command?: string }).command && installed.key) {
-                  ownedKeys.add(installed.key);
-                }
-              }
             }
           }
         }
@@ -203,23 +214,23 @@ export function uninstallCodexHooks(home = homedir()): string {
   }
   }
   const configPath = join(home, ".codex", "config.toml");
-  if (ownedKeys.size && existsSync(configPath)) {
+  if (ownedState.length && existsSync(configPath)) {
     const toml = parseToml(readFileSync(configPath, "utf8")) as Record<string, unknown>;
     const hooks = toml.hooks;
     const state = hooks && typeof hooks === "object" ? (hooks as Record<string, unknown>).state : undefined;
     if (state && typeof state === "object") {
-      const liveByKey = new Map(installedHooks.flatMap((hook) => hook.key ? [[hook.key, hook] as const] : []));
-      for (const key of ownedKeys) {
-        const live = liveByKey.get(key);
-        if ((!live || live.command === wrapper) && key in (state as Record<string, unknown>)) {
-          delete (state as Record<string, unknown>)[key];
+      for (const owned of ownedState) {
+        const current = (state as Record<string, unknown>)[owned.key];
+        if (current && typeof current === "object" &&
+            (current as { trusted_hash?: unknown }).trusted_hash === owned.trusted_hash) {
+          delete (state as Record<string, unknown>)[owned.key];
           changed = true;
         }
       }
       writeFileSync(configPath, stringifyToml(toml));
     }
   }
-  writeOwnedKeys(home, []);
+  writeOwnedState(home, []);
   if (changed && existsSync(path)) writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
   return changed ? `Removed llm-budget Codex hooks from ${path}\n` : "No llm-budget Codex hooks found.\n";
 }

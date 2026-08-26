@@ -347,7 +347,7 @@ async function statusCommand(home = homedir()): Promise<string> {
       lines.push(`  Hooks: ${formatInstallState(claudeHooksInstalled(home), "llm-budget claude install")}`);
     } else {
       lines.push(
-        `  Shim: ${codexShimInstalled(home) ? "installed" : "not installed — run llm-budget codex install (or codex shim-install)"}`,
+        `  Shim: ${codexShimInstalled(home) ? "installed" : "not installed — run llm-budget codex shim-install"}`,
       );
       lines.push(`  Hooks: ${formatInstallState(codexHooksInstalled(home), "llm-budget codex install")}`);
       if (codexHooksInstalled(home)) {
