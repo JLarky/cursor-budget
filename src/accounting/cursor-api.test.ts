@@ -160,7 +160,7 @@ test("fetchCursorPeriodUsage surfaces HTTP errors", async () => {
         accessToken: "x",
         fetch: async () => new Response("nope", { status: 401 }),
       }),
-    (err: unknown) => err instanceof CursorApiError && err.status === 401,
+    (err) => err instanceof CursorApiError && err.status === 401,
   );
 });
 
@@ -189,7 +189,7 @@ test("fetchCursorPeriodUsage surfaces timeout as CursorTimeoutError via signal.r
             signal.addEventListener("abort", rejectWithReason);
           }),
       }),
-    (err: unknown) => err instanceof CursorTimeoutError && err.timeoutMs === 20,
+    (err) => err instanceof CursorTimeoutError && err.timeoutMs === 20,
   );
 });
 

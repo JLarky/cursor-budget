@@ -3,15 +3,26 @@ import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import * as v from "valibot";
+import {
+  parse as parseToml,
+  stringify as stringifyToml,
+  type TomlTableWithoutBigInt,
+  type TomlValueWithoutBigInt,
+} from "smol-toml";
+import {
+  asJsonArray,
+  asJsonObject,
+  emptyJsonObject,
+  jsonString,
+  parseJsonText,
+  type JsonArray,
+  type JsonValue,
+} from "../json-value.js";
 import { ensureLlmConfig } from "./config.js";
 import { codexHookWrapperPath, codexHooksPath, codexHookStatePath, codexShimDir } from "./paths.js";
-import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 
 const EVENTS = ["UserPromptSubmit", "PreToolUse"] as const;
-interface HookGroup {
-  matcher?: string;
-  hooks: Array<Record<string, unknown>>;
-}
 
 interface CodexHookInfo {
   key?: string;
@@ -25,18 +36,30 @@ interface OwnedState {
   trusted_hash: string;
 }
 
+function asTomlTable(value: TomlValueWithoutBigInt | undefined): TomlTableWithoutBigInt | null {
+  if (value === undefined || Array.isArray(value) || value instanceof Date) return null;
+  if (v.safeParse(v.string(), value).success) return null;
+  if (v.safeParse(v.number(), value).success) return null;
+  if (v.safeParse(v.boolean(), value).success) return null;
+  // SAFETY: remaining TomlValueWithoutBigInt cases are tables.
+  return value as TomlTableWithoutBigInt;
+}
+
 function readOwnedState(home: string): OwnedState[] {
   try {
-    const value = JSON.parse(readFileSync(codexHookStatePath(home), "utf8")) as { state?: unknown };
-    return Array.isArray(value.state)
-      ? value.state.filter(
-          (entry): entry is OwnedState =>
-            typeof entry === "object" &&
-            entry !== null &&
-            typeof (entry as OwnedState).key === "string" &&
-            typeof (entry as OwnedState).trusted_hash === "string",
-        )
-      : [];
+    const value = asJsonObject(parseJsonText(readFileSync(codexHookStatePath(home), "utf8")));
+    const state = asJsonArray(value?.state);
+    if (!state) return [];
+    const owned: OwnedState[] = [];
+    for (const entry of state) {
+      const obj = asJsonObject(entry);
+      if (!obj) continue;
+      const key = jsonString(obj.key);
+      const trustedHash = jsonString(obj.trusted_hash);
+      if (key === null || trustedHash === null) continue;
+      owned.push({ key, trusted_hash: trustedHash });
+    }
+    return owned;
   } catch {
     return [];
   }
@@ -45,6 +68,17 @@ function readOwnedState(home: string): OwnedState[] {
 function writeOwnedState(home: string, state: OwnedState[]): void {
   mkdirSync(dirname(codexHookStatePath(home)), { recursive: true });
   writeFileSync(codexHookStatePath(home), `${JSON.stringify({ state }, null, 2)}\n`);
+}
+
+function readCodexHookInfo(value: JsonValue): CodexHookInfo | null {
+  const obj = asJsonObject(value);
+  if (!obj) return null;
+  return {
+    key: jsonString(obj.key) ?? undefined,
+    command: jsonString(obj.command) ?? undefined,
+    currentHash: jsonString(obj.currentHash) ?? undefined,
+    trustStatus: jsonString(obj.trustStatus) ?? undefined,
+  };
 }
 
 function listCodexHooks(home: string): CodexHookInfo[] {
@@ -68,8 +102,20 @@ function listCodexHooks(home: string): CodexHookInfo[] {
   if (result.status !== 0 || !result.stdout) return [];
   for (const line of result.stdout.split("\n")) {
     try {
-      const message = JSON.parse(line) as { id?: number; result?: { data?: Array<{ hooks?: CodexHookInfo[] }> } };
-      if (message.id === 2) return message.result?.data?.flatMap((item) => item.hooks ?? []) ?? [];
+      const message = asJsonObject(parseJsonText(line));
+      if (!message || message.id !== 2) continue;
+      const payload = asJsonObject(message.result);
+      const data = asJsonArray(payload?.data) ?? [];
+      const hooks: CodexHookInfo[] = [];
+      for (const item of data) {
+        const itemObj = asJsonObject(item);
+        const itemHooks = asJsonArray(itemObj?.hooks) ?? [];
+        for (const hook of itemHooks) {
+          const info = readCodexHookInfo(hook);
+          if (info) hooks.push(info);
+        }
+      }
+      return hooks;
     } catch {
       // app-server also emits notifications and diagnostics on stdout.
     }
@@ -82,24 +128,29 @@ function trustCodexHooks(home: string, wrapper: string): string {
   const ours = listed.filter((hook) => hook.command === wrapper && hook.key && hook.currentHash);
   if (ours.length === 0) return "Codex hook trust could not be established automatically; approve hooks in Codex startup review.";
   const configPath = join(home, ".codex", "config.toml");
-  let config: Record<string, unknown> = {};
-  if (existsSync(configPath)) config = parseToml(readFileSync(configPath, "utf8")) as Record<string, unknown>;
-  const hooks = (typeof config.hooks === "object" && config.hooks !== null
-    ? config.hooks as Record<string, unknown> : {});
-  const state = (typeof hooks.state === "object" && hooks.state !== null
-    ? hooks.state as Record<string, unknown> : {});
+  let config: TomlTableWithoutBigInt = {};
+  if (existsSync(configPath)) config = parseToml(readFileSync(configPath, "utf8"), {});
+  const hooks = asTomlTable(config.hooks) ?? {};
+  const state = asTomlTable(hooks.state) ?? {};
   const priorState = readOwnedState(home);
   for (const prior of priorState) {
     const current = state[prior.key];
-    if (current === undefined || (current && typeof current === "object" &&
-        (current as { trusted_hash?: unknown }).trusted_hash === prior.trusted_hash)) {
+    if (current === undefined) {
+      delete state[prior.key];
+      continue;
+    }
+    const currentTable = asTomlTable(current);
+    if (currentTable && currentTable.trusted_hash === prior.trusted_hash) {
       delete state[prior.key];
     }
   }
   const ownedState: OwnedState[] = [];
   for (const hook of ours) {
-    state[hook.key!] = { enabled: true, trusted_hash: hook.currentHash };
-    ownedState.push({ key: hook.key!, trusted_hash: hook.currentHash! });
+    const key = hook.key;
+    const currentHash = hook.currentHash;
+    if (!key || !currentHash) continue;
+    state[key] = { enabled: true, trusted_hash: currentHash };
+    ownedState.push({ key, trusted_hash: currentHash });
   }
 
   hooks.state = state;
@@ -119,10 +170,17 @@ export function codexHookTrustStatus(
   return [...new Set(ours.map((hook) => hook.trustStatus ?? "unknown"))].join(", ");
 }
 
-function owned(entry: unknown, wrapper: string): boolean {
-  return typeof entry === "object" && entry !== null && "command" in entry &&
-    (entry as { command: unknown }).command === wrapper;
+function owned(entry: JsonValue, wrapper: string): boolean {
+  const obj = asJsonObject(entry);
+  if (!obj || !("command" in obj)) return false;
+  return obj.command === wrapper;
 }
+
+function groupHooks(group: JsonValue): JsonArray {
+  const obj = asJsonObject(group);
+  return asJsonArray(obj?.hooks) ?? [];
+}
+
 export function installCodexHooks(home = homedir()): string {
   ensureLlmConfig(home);
   const wrapper = codexHookWrapperPath(home);
@@ -146,22 +204,20 @@ fi
 exec "$NODE" ${JSON.stringify(cli)} codex hook
 `);
   chmodSync(wrapper, 0o755);
-  let config: Record<string, unknown> = {};
+  let config = emptyJsonObject();
   if (existsSync(path)) {
     try {
-      config = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+      config = asJsonObject(parseJsonText(readFileSync(path, "utf8"))) ?? emptyJsonObject();
     } catch {
       return `Cannot install Codex hooks: ${path} is malformed; preserving it unchanged.`;
     }
   }
-  const hooks =
-    typeof config.hooks === "object" && config.hooks !== null
-      ? config.hooks as Record<string, unknown>
-      : {};
+  const hooks = asJsonObject(config.hooks) ?? emptyJsonObject();
   for (const event of EVENTS) {
-    const groups = Array.isArray(hooks[event]) ? (hooks[event] as HookGroup[]) : [];
-    if (!groups.some((group) => (group?.hooks ?? []).some((hook) => owned(hook, wrapper)))) {
-      const group: HookGroup = { hooks: [{ type: "command", command: wrapper }] };
+    const groups = asJsonArray(hooks[event]) ?? [];
+    if (!groups.some((group) => groupHooks(group).some((hook) => owned(hook, wrapper)))) {
+      const group = emptyJsonObject();
+      group.hooks = [{ type: "command", command: wrapper }];
       if (event === "PreToolUse") group.matcher = "*";
       groups.push(group);
     }
@@ -183,55 +239,58 @@ exec "$NODE" ${JSON.stringify(cli)} codex hook
     "The PATH shim remains an optional startup belt for older Codex versions.",
   ].join("\n");
 }
+
 export function uninstallCodexHooks(home = homedir()): string {
   const path = codexHooksPath(home);
   const wrapper = codexHookWrapperPath(home);
   const ownedState = readOwnedState(home);
-  let config: Record<string, unknown> = {};
+  let config = emptyJsonObject();
   let hooksParsed = !existsSync(path);
   if (existsSync(path)) {
     try {
-      config = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+      const parsed = asJsonObject(parseJsonText(readFileSync(path, "utf8")));
       hooksParsed = true;
+      if (parsed) config = parsed;
     } catch {
       // Preserve malformed hooks.json byte-for-byte.
     }
   }
-  const hooks = config.hooks;
+  const hookMap = asJsonObject(config.hooks);
   let hooksChanged = false;
   let trustChanged = false;
-  if (typeof hooks === "object" && hooks !== null) {
+  if (hookMap) {
     for (const event of EVENTS) {
-    const map = hooks as Record<string, unknown>;
-    const groups = Array.isArray(map[event]) ? (map[event] as HookGroup[]) : [];
-    const next = groups
-      .map((group) => {
-        const filtered = (group?.hooks ?? []).filter((hook) => !owned(hook, wrapper));
-        if (filtered.length !== (group?.hooks ?? []).length) {
+      const groups = asJsonArray(hookMap[event]) ?? [];
+      const next: JsonArray = [];
+      for (const group of groups) {
+        const groupObj = asJsonObject(group) ?? emptyJsonObject();
+        const inner = asJsonArray(groupObj.hooks) ?? [];
+        const filtered = inner.filter((hook) => !owned(hook, wrapper));
+        if (filtered.length !== inner.length) {
           hooksChanged = true;
         }
-        return { ...group, hooks: filtered };
-      })
-      .filter((group) => group.hooks.length > 0);
-    if (next.length) map[event] = next; else delete map[event];
+        if (filtered.length === 0) continue;
+        next.push({ ...groupObj, hooks: filtered });
+      }
+      if (next.length) hookMap[event] = next; else delete hookMap[event];
     }
+    config.hooks = hookMap;
   }
   const configPath = join(home, ".codex", "config.toml");
   if (ownedState.length && existsSync(configPath)) {
-    let toml: Record<string, unknown>;
+    let toml: TomlTableWithoutBigInt;
     try {
-      toml = parseToml(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+      toml = parseToml(readFileSync(configPath, "utf8"), {});
     } catch {
       return `Cannot remove Codex trust state: ${configPath} is malformed; preserving it unchanged.`;
     }
-    const hooks = toml.hooks;
-    const state = hooks && typeof hooks === "object" ? (hooks as Record<string, unknown>).state : undefined;
-    if (state && typeof state === "object") {
-      for (const owned of ownedState) {
-        const current = (state as Record<string, unknown>)[owned.key];
-        if (current && typeof current === "object" &&
-            (current as { trusted_hash?: unknown }).trusted_hash === owned.trusted_hash) {
-          delete (state as Record<string, unknown>)[owned.key];
+    const tomlHooks = asTomlTable(toml.hooks);
+    const state = asTomlTable(tomlHooks?.state);
+    if (state) {
+      for (const ownedEntry of ownedState) {
+        const current = asTomlTable(state[ownedEntry.key]);
+        if (current && current.trusted_hash === ownedEntry.trusted_hash) {
+          delete state[ownedEntry.key];
           trustChanged = true;
         }
       }
@@ -255,15 +314,17 @@ export function uninstallCodexHooks(home = homedir()): string {
   if (trustChanged) lines.push(`Removed llm-budget Codex trust state from ${configPath}`);
   return `${lines.join("\n")}\n`;
 }
+
 export function codexHooksInstalled(home = homedir()): boolean {
   try {
-    const config = JSON.parse(readFileSync(codexHooksPath(home), "utf8")) as {
-      hooks?: Record<string, unknown>;
-    };
-    return EVENTS.every((event) =>
-      (Array.isArray(config.hooks?.[event]) ? (config.hooks[event] as HookGroup[]) : [])
-        .some((group) => (group?.hooks ?? []).some((hook) => owned(hook, codexHookWrapperPath(home)))),
-    );
+    const config = asJsonObject(parseJsonText(readFileSync(codexHooksPath(home), "utf8")));
+    const hooks = asJsonObject(config?.hooks);
+    if (!hooks) return false;
+    const wrapper = codexHookWrapperPath(home);
+    return EVENTS.every((event) => {
+      const groups = asJsonArray(hooks[event]) ?? [];
+      return groups.some((group) => groupHooks(group).some((hook) => owned(hook, wrapper)));
+    });
   } catch {
     return false;
   }

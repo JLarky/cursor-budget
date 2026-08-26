@@ -88,10 +88,10 @@ export function evaluateBudget(input: {
   return { allow: reasons.length === 0, reasons, overrideActive: false, excluded: false };
 }
 
-const TOOL_LABELS: Record<string, string> = {
+const TOOL_LABELS = {
   claude: "Claude Code",
   codex: "Codex",
-};
+} as const;
 
 export function formatBudgetBlockMessage(
   evaluation: BudgetEvaluation,

@@ -2,10 +2,15 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 
+type NotifyChildProcess = {
+  spawn: () => EventEmitter & { unref(): EventEmitter };
+};
+
 test("notify ignores missing notify-send without throwing", async () => {
   const { createRequire } = await import("node:module");
   const require = createRequire(import.meta.url);
-  const childProcess = require("node:child_process") as typeof import("node:child_process");
+  // SAFETY: createRequire returns the mutable CommonJS node:child_process module.
+  const childProcess = require("node:child_process") as NotifyChildProcess;
   const originalSpawn = childProcess.spawn;
 
   class FakeChild extends EventEmitter {
@@ -15,8 +20,8 @@ test("notify ignores missing notify-send without throwing", async () => {
   }
 
   const child = new FakeChild();
-  (childProcess as { spawn: typeof childProcess.spawn }).spawn = (() =>
-    child as unknown as ReturnType<typeof childProcess.spawn>) as typeof childProcess.spawn;
+  // SAFETY: test stub only needs spawn() to return an EventEmitter with unref().
+  childProcess.spawn = (() => child) as typeof childProcess.spawn;
 
   try {
     const { notify } = await import("./notify.js");

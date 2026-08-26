@@ -113,7 +113,7 @@ async function watchdogPass(
 
     // Print the same block message the shim would have shown.
     process.stderr.write(
-      `${formatGuardDeny(decision as GuardDecision, "codex", decision.sessionId)}\n`,
+      `${formatGuardDeny(decision, "codex", decision.sessionId)}\n`,
     );
     if (firstTrip) {
       notifyFn(

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { jsonString, parseJsonText, type JsonObject, type JsonValue } from "../../json-value.js";
 import { asRecord, fetchJson, finiteNumber, type FetchFn } from "./http.js";
 import { errored, unavailable, type ProviderUsage, type UsageWindow } from "./types.js";
 
@@ -23,8 +24,13 @@ interface CodexTokens {
 
 interface CodexAuthRecord {
   path: string;
-  raw: Record<string, unknown>;
+  raw: JsonObject;
   tokens: CodexTokens;
+}
+
+interface CodexUsageWindows {
+  windows: UsageWindow[];
+  planLabel: string | null;
 }
 
 function authCandidates(options: CodexFetchOptions): string[] {
@@ -45,17 +51,17 @@ function readAuth(options: CodexFetchOptions): CodexAuthRecord | null {
   for (const path of authCandidates(options)) {
     if (!existsSync(path)) continue;
     try {
-      const raw = asRecord(JSON.parse(readFileSync(path, "utf8")));
+      const raw = asRecord(parseJsonText(readFileSync(path, "utf8")));
       const tokens = asRecord(raw?.tokens);
-      const access = typeof tokens?.access_token === "string" ? tokens.access_token : "";
+      const access = jsonString(tokens?.access_token) ?? "";
       if (!raw || !tokens || !access) continue;
       return {
         path,
         raw,
         tokens: {
           access_token: access,
-          refresh_token: typeof tokens.refresh_token === "string" ? tokens.refresh_token : undefined,
-          account_id: typeof tokens.account_id === "string" ? tokens.account_id : undefined,
+          refresh_token: jsonString(tokens.refresh_token) ?? undefined,
+          account_id: jsonString(tokens.account_id) ?? undefined,
         },
       };
     } catch {
@@ -65,7 +71,7 @@ function readAuth(options: CodexFetchOptions): CodexAuthRecord | null {
   return null;
 }
 
-function unixToIso(value: unknown): string | null {
+function unixToIso(value: JsonValue | null | undefined): string | null {
   const n = finiteNumber(value);
   if (n == null) return null;
   const ms = n < 10_000_000_000 ? n * 1000 : n;
@@ -73,7 +79,7 @@ function unixToIso(value: unknown): string | null {
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
-function rateWindow(id: string, label: string, raw: unknown): UsageWindow | null {
+function rateWindow(id: string, label: string, raw: JsonValue | null | undefined): UsageWindow | null {
   const rec = asRecord(raw);
   if (!rec) return null;
   return {
@@ -84,7 +90,7 @@ function rateWindow(id: string, label: string, raw: unknown): UsageWindow | null
   };
 }
 
-function windowsFromUsage(json: unknown): { windows: UsageWindow[]; planLabel: string | null } {
+function windowsFromUsage(json: JsonValue | null | undefined): CodexUsageWindows {
   const rec = asRecord(json);
   const rate = asRecord(rec?.rate_limit);
   const review = asRecord(rec?.code_review_rate_limit);
@@ -97,22 +103,24 @@ function windowsFromUsage(json: unknown): { windows: UsageWindow[]; planLabel: s
   if (codeReview) windows.push(codeReview);
   return {
     windows,
-    planLabel: typeof rec?.plan_type === "string" ? rec.plan_type : null,
+    planLabel: jsonString(rec?.plan_type),
   };
 }
 
 async function callUsage(
   tokens: CodexTokens,
   options: CodexFetchOptions,
-): Promise<{ kind: "ok"; json: unknown } | { kind: "auth" } | { kind: "error"; detail: string }> {
+): Promise<{ kind: "ok"; json: JsonValue } | { kind: "auth" } | { kind: "error"; detail: string }> {
   try {
-    const headers: Record<string, string> = {
+    const headers = {
       Authorization: `Bearer ${tokens.access_token}`,
       Accept: "application/json",
       "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
     };
-    if (tokens.account_id) headers["ChatGPT-Account-Id"] = tokens.account_id;
-    const res = await fetchJson(USAGE_URL, { headers }, options);
+    const requestHeaders = tokens.account_id
+      ? { ...headers, "ChatGPT-Account-Id": tokens.account_id }
+      : headers;
+    const res = await fetchJson(USAGE_URL, { headers: requestHeaders }, options);
     if (res.status === 401 || res.status === 403 || res.text.trim().startsWith("<")) {
       return { kind: "auth" };
     }
@@ -149,11 +157,11 @@ async function refreshToken(
       options,
     );
     const rec = asRecord(res.json);
-    const access = typeof rec?.access_token === "string" ? rec.access_token : "";
+    const access = jsonString(rec?.access_token) ?? "";
     if (!res.status || res.status >= 300 || !access) return null;
     return {
       access_token: access,
-      refresh_token: typeof rec?.refresh_token === "string" ? rec.refresh_token : undefined,
+      refresh_token: jsonString(rec?.refresh_token) ?? undefined,
     };
   } catch {
     return null;

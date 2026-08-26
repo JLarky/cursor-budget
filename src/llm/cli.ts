@@ -76,7 +76,7 @@ async function main(): Promise<void> {
       }
       throw new Error(
         "Unknown command: llm-budget claude " + sub +
-          "\nRun \`llm-budget claude help\`.",
+          "\nRun `llm-budget claude help`.",
       );
     }
     case "codex": {
@@ -104,7 +104,7 @@ async function main(): Promise<void> {
       }
       throw new Error(
         "Unknown command: llm-budget codex " + sub +
-          "\nRun \`llm-budget codex help\`.",
+          "\nRun `llm-budget codex help`.",
       );
     }
     case "watchdog": {
@@ -152,7 +152,7 @@ async function main(): Promise<void> {
       // one keystroke away.
       process.stdout.write(await statusCommand());
       process.stdout.write(
-        "\nRun \`llm-budget help\` for all commands and scopes.\n",
+        "\nRun `llm-budget help` for all commands and scopes.\n",
       );
       return;
     case "-h":
@@ -383,7 +383,7 @@ async function statusCommand(home = homedir()): Promise<string> {
               : config.claudeCode.rolling5hBlockAtPercent
             : (config.codex.openAiWeeklyBlockAtPercent ?? config.codex.weeklyBlockAtPercent);
         const pct =
-          typeof w.usedPct === "number" && Number.isFinite(w.usedPct)
+          w.usedPct !== null && Number.isFinite(w.usedPct)
             ? formatPercent(w.usedPct)
             : "unknown";
         const reset = w.resetsAt ? ` — resets ${w.resetsAt}` : "";

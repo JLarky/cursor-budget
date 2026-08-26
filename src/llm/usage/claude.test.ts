@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+import type { JsonValue } from "../../json-value.js";
 import { fetchClaudeUsage } from "./claude.js";
 import { tempHome } from "../../test-home.js";
 
-function jsonResponse(status: number, body: unknown): Response {
+function jsonResponse(status: number, body: JsonValue): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json" },
@@ -73,7 +74,7 @@ test("fetchClaudeUsage refreshes a file-backed token after 401", async () => {
         assert.equal(body.refresh_token, "refresh-1");
         return jsonResponse(200, { access_token: "access-2", refresh_token: "refresh-2" });
       }
-      const auth = String((init?.headers as Record<string, string>).Authorization);
+      const auth = String(new Headers(init?.headers).get("Authorization"));
       if (auth.includes("access-1")) return jsonResponse(401, { error: "expired" });
       return jsonResponse(200, {
         five_hour: { utilization: 1 },

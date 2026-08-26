@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+import type { JsonValue } from "../../json-value.js";
 import { openLlmDb } from "../db.js";
 import { fetchDirectUsage, writeUsageCache } from "./index.js";
 import { tempHome } from "../../test-home.js";
 
-function jsonResponse(status: number, body: unknown): Response {
+function jsonResponse(status: number, body: JsonValue): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json" },

@@ -376,6 +376,7 @@ test("warnings fire once per threshold per billing cycle", async () => {
     const db = openDb(home);
     const periodKey = periodUsage.usage.billingCycleEnd!.toISOString();
     assert.equal(hasWarning(db, "cursorModels", 0.5, periodKey), true);
+    // SAFETY: SELECT COUNT(*) AS n; node:sqlite returns number | bigint for that column.
     const rows = db
       .prepare("SELECT COUNT(*) AS n FROM warning_emissions WHERE window_id = ?")
       .get("cursorModels") as { n: number | bigint };

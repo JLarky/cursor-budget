@@ -45,7 +45,7 @@ SHIM_DIR=${JSON.stringify(shimDirValue)}
 SAVE_PATH="$PATH"
 # Remove SHIM_DIR as an exact PATH component. Iterate with \${var%%:*} /
 # \${var#*:} so glob-like entries are never expanded, and track whether a
-# component has been emitted (\$SEEN) so leading/interior/trailing empty
+# component has been emitted ($SEEN) so leading/interior/trailing empty
 # components (POSIX "current directory") all survive intact.
 NEW_PATH=""
 SEEN=0

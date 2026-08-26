@@ -23,7 +23,7 @@ test("empty object uses defaults", () => {
 test("rejects unknown top-level fields", () => {
   assert.throws(
     () => parseConfig({ limits: { rollingHour: { usd: 1 } } }),
-    (error: unknown) => error instanceof ConfigError && /Invalid config\.json/.test(error.message),
+    (error) => error instanceof ConfigError && /Invalid config\.json/.test(error.message),
   );
 });
 
@@ -124,7 +124,7 @@ test("ensureConfig errors include config path and recovery hint", () => {
     writeFileSync(path, "{not-json");
     assert.throws(
       () => ensureConfig(home),
-      (error: unknown) =>
+      (error) =>
         error instanceof ConfigError &&
         error.message.includes(path) &&
         /Delete this file to regenerate defaults/.test(error.message),

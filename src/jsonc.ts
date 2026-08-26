@@ -4,6 +4,10 @@
  * value never breaks parsing.
  */
 
+import { parseJsonText, type JsonValue } from "./json-value.js";
+
+export type { JsonArray, JsonObject, JsonValue } from "./json-value.js";
+
 /** Strip comments; string literals are copied verbatim. */
 export function stripJsoncComments(src: string): string {
   let out = "";
@@ -70,6 +74,6 @@ export function stripTrailingCommas(src: string): string {
 }
 
 /** Parse JSONC text (comments and trailing commas tolerated). */
-export function parseJsonc(text: string): unknown {
-  return JSON.parse(stripTrailingCommas(stripJsoncComments(text)));
+export function parseJsonc(text: string): JsonValue {
+  return parseJsonText(stripTrailingCommas(stripJsoncComments(text)));
 }

@@ -3,23 +3,38 @@ import { homedir } from "node:os";
 import { PERIOD_USAGE_CACHE_KEY } from "../accounting/cursor-api.js";
 import { DEFAULT_CONFIG, writeConfig } from "../config.js";
 import { openDb, setCursorOverride, setState } from "../db/client.js";
+import {
+  asJsonArray,
+  asJsonObject,
+  parseJsonText,
+  type JsonValue,
+} from "../json-value.js";
 import { hookWrapperPath, hooksJsonPath } from "../paths.js";
+
+function isLlmBudgetEntry(entry: JsonValue): boolean {
+  const obj = asJsonObject(entry);
+  if (!obj || !("command" in obj)) return false;
+  return String(obj.command).includes("llm-budget");
+}
 
 export function uninstallCommand(purgeData: boolean, home = homedir()): string {
   const hooksPath = hooksJsonPath(home);
   if (existsSync(hooksPath)) {
-    const hooks = JSON.parse(readFileSync(hooksPath, "utf8")) as {
-      version: number;
-      hooks: Record<string, unknown[]>;
-    };
-    for (const [event, list] of Object.entries(hooks.hooks ?? {})) {
-      hooks.hooks[event] = (list ?? []).filter((entry) => {
-        if (typeof entry !== "object" || entry === null || !("command" in entry)) return true;
-        return !String((entry as { command: string }).command).includes("llm-budget");
-      });
-      if (hooks.hooks[event].length === 0) delete hooks.hooks[event];
+    const settings = asJsonObject(parseJsonText(readFileSync(hooksPath, "utf8")));
+    if (settings) {
+      const hookMap = asJsonObject(settings.hooks);
+      if (hookMap) {
+        for (const [event, list] of Object.entries(hookMap)) {
+          const entries = asJsonArray(list);
+          if (!entries) continue;
+          const next = entries.filter((entry) => !isLlmBudgetEntry(entry));
+          if (next.length === 0) delete hookMap[event];
+          else hookMap[event] = next;
+        }
+        settings.hooks = hookMap;
+      }
+      writeFileSync(hooksPath, `${JSON.stringify(settings, null, 2)}\n`);
     }
-    writeFileSync(hooksPath, `${JSON.stringify(hooks, null, 2)}\n`);
   }
 
   const wrapper = hookWrapperPath(home);

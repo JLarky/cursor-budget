@@ -1,5 +1,6 @@
 import { renderUnifiedConfigFile } from "./config-render.js";
 import { ConfigFileSchema } from "./config-schema.js";
+import type { JsonValue } from "./json-value.js";
 import { DEFAULT_CONFIG as LLM_DEFAULT_CONFIG } from "./llm/config.js";
 import * as v from "valibot";
 
@@ -82,7 +83,7 @@ export class ConfigError extends Error {
   }
 }
 
-export function parseConfig(raw: unknown): Config {
+export function parseConfig(raw: JsonValue | Config): Config {
   let parsed: v.InferOutput<typeof ConfigFileSchema>;
   try {
     parsed = v.parse(ConfigFileSchema, raw);

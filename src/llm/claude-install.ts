@@ -2,24 +2,29 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  asJsonArray,
+  asJsonObject,
+  emptyJsonObject,
+  parseJsonText,
+  type JsonArray,
+  type JsonValue,
+} from "../json-value.js";
 import { ensureLlmConfig } from "./config.js";
 import { claudeHookWrapperPath, claudeSettingsPath } from "./paths.js";
 
 /** Hook events the guard registers (enforce set only — see claude-hook.ts). */
 const CLAUDE_HOOK_EVENTS = ["UserPromptSubmit", "PreToolUse"] as const;
 
-function isLlmBudgetEntry(entry: unknown): boolean {
-  return (
-    typeof entry === "object" &&
-    entry !== null &&
-    "command" in entry &&
-    String((entry as { command: unknown }).command).includes("llm-budget")
-  );
+function isLlmBudgetEntry(entry: JsonValue): boolean {
+  const obj = asJsonObject(entry);
+  if (!obj || !("command" in obj)) return false;
+  return String(obj.command).includes("llm-budget");
 }
 
-interface ClaudeHookGroup {
-  matcher?: string;
-  hooks: Array<Record<string, unknown>>;
+function groupHooks(group: JsonValue): JsonArray {
+  const obj = asJsonObject(group);
+  return asJsonArray(obj?.hooks) ?? [];
 }
 
 /**
@@ -58,20 +63,18 @@ exec "$NODE" ${JSON.stringify(cli)} claude hook
   );
   chmodSync(wrapper, 0o755);
 
-  let settings: Record<string, unknown> = {};
+  let settings = emptyJsonObject();
   if (existsSync(settingsPath)) {
-    settings = JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown>;
+    settings = asJsonObject(parseJsonText(readFileSync(settingsPath, "utf8"))) ?? emptyJsonObject();
   }
-  const hooks =
-    typeof settings.hooks === "object" && settings.hooks !== null
-      ? (settings.hooks as Record<string, unknown>)
-      : {};
+  const hooks = asJsonObject(settings.hooks) ?? emptyJsonObject();
 
   for (const event of CLAUDE_HOOK_EVENTS) {
-    const groups = Array.isArray(hooks[event]) ? (hooks[event] as ClaudeHookGroup[]) : [];
-    const already = groups.some((group) => (group?.hooks ?? []).some(isLlmBudgetEntry));
+    const groups = asJsonArray(hooks[event]) ?? [];
+    const already = groups.some((group) => groupHooks(group).some(isLlmBudgetEntry));
     if (!already) {
-      const group: ClaudeHookGroup = { hooks: [{ type: "command", command: wrapper }] };
+      const group = emptyJsonObject();
+      group.hooks = [{ type: "command", command: wrapper }];
       if (event === "PreToolUse") group.matcher = "*";
       groups.push(group);
     }
@@ -96,25 +99,23 @@ export function uninstallClaudeHooks(home = homedir()): string {
 
   let removedFrom = "";
   if (existsSync(settingsPath)) {
-    const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as Record<
-      string,
-      unknown
-    >;
-    const hooks = settings.hooks;
-    if (typeof hooks === "object" && hooks !== null) {
-      const hookMap = hooks as Record<string, unknown>;
+    const settings = asJsonObject(parseJsonText(readFileSync(settingsPath, "utf8")));
+    const hookMap = asJsonObject(settings?.hooks);
+    if (settings && hookMap) {
       for (const event of CLAUDE_HOOK_EVENTS) {
-        const groups = Array.isArray(hookMap[event]) ? (hookMap[event] as ClaudeHookGroup[]) : [];
-        const next = groups
-          .map((group) => ({
-            ...group,
-            hooks: (group?.hooks ?? []).filter((h) => !isLlmBudgetEntry(h)),
-          }))
-          .filter((group) => group.hooks.length > 0);
+        const groups = asJsonArray(hookMap[event]) ?? [];
+        const next: JsonArray = [];
+        for (const group of groups) {
+          const groupObj = asJsonObject(group) ?? emptyJsonObject();
+          const filtered = groupHooks(group).filter((h) => !isLlmBudgetEntry(h));
+          if (filtered.length === 0) continue;
+          next.push({ ...groupObj, hooks: filtered });
+        }
         if (next.length !== groups.length) removedFrom = settingsPath;
         if (next.length === 0) delete hookMap[event];
         else hookMap[event] = next;
       }
+      settings.hooks = hookMap;
       writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
     }
   }
@@ -131,14 +132,12 @@ export function claudeHooksInstalled(home = homedir()): boolean {
   const settingsPath = claudeSettingsPath(home);
   if (!existsSync(settingsPath)) return false;
   try {
-    const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown>;
-    const hooks =
-      typeof settings.hooks === "object" && settings.hooks !== null
-        ? (settings.hooks as Record<string, unknown>)
-        : {};
+    const settings = asJsonObject(parseJsonText(readFileSync(settingsPath, "utf8")));
+    const hooks = asJsonObject(settings?.hooks);
+    if (!hooks) return false;
     return CLAUDE_HOOK_EVENTS.every((event) => {
-      const groups = Array.isArray(hooks[event]) ? (hooks[event] as ClaudeHookGroup[]) : [];
-      return groups.some((group) => (group?.hooks ?? []).some(isLlmBudgetEntry));
+      const groups = asJsonArray(hooks[event]) ?? [];
+      return groups.some((group) => groupHooks(group).some(isLlmBudgetEntry));
     });
   } catch {
     return false;
