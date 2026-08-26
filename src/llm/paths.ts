@@ -30,3 +30,15 @@ export function codexShimDir(home = homedir()): string {
 export function codexShimPath(home = homedir()): string {
   return join(codexShimDir(home), "codex");
 }
+
+export function codexHooksPath(home = homedir()): string {
+  return join(home, ".codex", "hooks.json");
+}
+
+export function codexHookWrapperPath(home = homedir()): string {
+  return join(dataDir(home), "bin", "codex-hook");
+}
+
+export function codexHookStatePath(home = homedir()): string {
+  return join(dataDir(home), "codex-hooks-state.json");
+}

@@ -45,7 +45,7 @@ test("status covers all three agents", { timeout: 60_000 }, async () => {
   assert.match(result.stdout, /Codex:/);
   assert.match(result.stdout, /Cursor Agent:/);
   assert.match(result.stdout, /Claude Code:\n  Hooks: not installed — run llm-budget claude install/);
-  assert.match(result.stdout, /Codex:\n  Shim: not installed — run llm-budget codex install/);
+  assert.match(result.stdout, /Codex:\n  Shim: not installed — run llm-budget codex shim-install/);
   assert.match(result.stdout, /Cursor Agent:\n  Hooks: not installed — run llm-budget cursor install/);
   // Every agent block carries its own escape-hatch state.
   assert.equal(result.stdout.split("Override:").length - 1 >= 3, true);
@@ -57,21 +57,22 @@ test("install registers every provider and status then reports installed", { tim
   const before = await runCli(["status"], home);
   assert.equal(before.code, 0);
   assert.match(before.stdout, /Hooks: not installed — run llm-budget claude install/);
-  assert.match(before.stdout, /Shim: not installed — run llm-budget codex install/);
+  assert.match(before.stdout, /Shim: not installed — run llm-budget codex shim-install/);
   assert.match(before.stdout, /Hooks: not installed — run llm-budget cursor install/);
 
   const installed = await runCli(["install"], home);
   assert.equal(installed.code, 0);
   assert.match(installed.stdout, /Installed llm-budget Claude Code hooks/);
-  assert.match(installed.stdout, /Installed llm-budget Codex shim/);
+  assert.match(installed.stdout, /Installed llm-budget Codex native hooks/);
   assert.match(installed.stdout, /Installed llm-budget Cursor Agent hooks/);
 
   const after = await runCli(["status"], home);
   assert.equal(after.code, 0);
   assert.match(after.stdout, /Claude Code:\n  Hooks: installed\n/);
-  assert.match(after.stdout, /Codex:\n  Shim: installed\n/);
+  assert.match(after.stdout, /Codex:\n  Shim: not installed/);
+  assert.match(after.stdout, /Codex:\n(?:.*\n)*  Hooks: installed\n/);
   assert.match(after.stdout, /Cursor Agent:\n  Hooks: installed\n/);
-  assert.doesNotMatch(after.stdout, /not installed/);
+  assert.match(after.stdout, /Codex:\n  Shim: not installed/);
 });
 
 test("help lists three peer scopes and both override stores", async () => {
