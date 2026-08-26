@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { codexHookStatePath, codexHooksPath } from "./paths.js";
-import { uninstallCodexHooks } from "./codex-install.js";
+import { installCodexHooks, uninstallCodexHooks } from "./codex-install.js";
 import { tempHome } from "../test-home.js";
 
 function fixture() {
@@ -52,4 +52,24 @@ test("uninstall works without hooks.json or Codex", () => {
   uninstallCodexHooks(home);
   assert.doesNotMatch(readFileSync(join(home, ".codex", "config.toml"), "utf8"), /trusted_hash/);
   assert.match(readFileSync(codexHookStatePath(home), "utf8"), /"state": \[\]/);
+});
+
+test("malformed hooks.json survives install and uninstall byte-for-byte", () => {
+  const home = fixture();
+  const original = '{"hooks":{"UserPromptSubmit":[{"hooks":[{"command":"/foreign"}]}]';
+  writeFileSync(codexHooksPath(home), original);
+  writeState(home, "/hooks.json:user_prompt_submit:0:0", "sha256:ours");
+  assert.match(installCodexHooks(home), /malformed/);
+  assert.equal(readFileSync(codexHooksPath(home), "utf8"), original);
+  uninstallCodexHooks(home);
+  assert.equal(readFileSync(codexHooksPath(home), "utf8"), original);
+});
+
+test("install prunes a previously-owned matching orphan state", () => {
+  const home = fixture();
+  const key = "/hooks.json:user_prompt_submit:0:0";
+  writeState(home, key, "sha256:ours");
+  writeFileSync(codexHooksPath(home), JSON.stringify({ hooks: {} }));
+  installCodexHooks(home);
+  assert.doesNotMatch(readFileSync(join(home, ".codex", "config.toml"), "utf8"), /sha256:ours/);
 });

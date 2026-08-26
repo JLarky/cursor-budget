@@ -148,7 +148,11 @@ exec "$NODE" ${JSON.stringify(cli)} codex hook
   chmodSync(wrapper, 0o755);
   let config: Record<string, unknown> = {};
   if (existsSync(path)) {
-    config = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    try {
+      config = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    } catch {
+      return `Cannot install Codex hooks: ${path} is malformed; preserving it unchanged.`;
+    }
   }
   const hooks =
     typeof config.hooks === "object" && config.hooks !== null
@@ -184,17 +188,19 @@ export function uninstallCodexHooks(home = homedir()): string {
   const wrapper = codexHookWrapperPath(home);
   const ownedState = readOwnedState(home);
   let config: Record<string, unknown> = {};
+  let hooksParsed = !existsSync(path);
   if (existsSync(path)) {
     try {
       config = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+      hooksParsed = true;
     } catch {
-      config = {};
+      // Preserve malformed hooks.json byte-for-byte.
     }
   }
   const hooks = config.hooks;
   let changed = false;
   if (typeof hooks === "object" && hooks !== null) {
-  for (const event of EVENTS) {
+    for (const event of EVENTS) {
     const map = hooks as Record<string, unknown>;
     const groups = Array.isArray(map[event]) ? (map[event] as HookGroup[]) : [];
     const next = groups
@@ -202,20 +208,21 @@ export function uninstallCodexHooks(home = homedir()): string {
         const filtered = (group?.hooks ?? []).filter((hook) => !owned(hook, wrapper));
         if (filtered.length !== (group?.hooks ?? []).length) {
           changed = true;
-          for (const hook of group?.hooks ?? []) {
-            if (owned(hook, wrapper)) {
-            }
-          }
         }
         return { ...group, hooks: filtered };
       })
       .filter((group) => group.hooks.length > 0);
     if (next.length) map[event] = next; else delete map[event];
-  }
+    }
   }
   const configPath = join(home, ".codex", "config.toml");
   if (ownedState.length && existsSync(configPath)) {
-    const toml = parseToml(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    let toml: Record<string, unknown>;
+    try {
+      toml = parseToml(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    } catch {
+      return `Cannot remove Codex trust state: ${configPath} is malformed; preserving it unchanged.`;
+    }
     const hooks = toml.hooks;
     const state = hooks && typeof hooks === "object" ? (hooks as Record<string, unknown>).state : undefined;
     if (state && typeof state === "object") {
@@ -231,7 +238,9 @@ export function uninstallCodexHooks(home = homedir()): string {
     }
   }
   writeOwnedState(home, []);
-  if (changed && existsSync(path)) writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+  if (changed && hooksParsed && existsSync(path)) {
+    writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+  }
   return changed ? `Removed llm-budget Codex hooks from ${path}\n` : "No llm-budget Codex hooks found.\n";
 }
 export function codexHooksInstalled(home = homedir()): boolean {
