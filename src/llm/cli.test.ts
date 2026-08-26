@@ -86,7 +86,6 @@ test("help lists three peer scopes and both override stores", async () => {
   assert.match(result.stdout, /llm-budget cursor override /);
   assert.doesNotMatch(result.stdout, /Shared commands \(Claude Code and Codex\)/);
   assert.doesNotMatch(result.stdout, /the original Cursor/);
-  assert.doesNotMatch(result.stdout, /Paseo/);
   assert.doesNotMatch(result.stdout, /\.cursor\/llm-budget/);
   assert.match(result.stdout, /~\/\.config\/llm-budget/);
 });

@@ -19,7 +19,7 @@ export function renderUnifiedConfigFile(llm: LlmConfig, cursor: Config): string 
   "claudeCode": {
     // Gate Claude Code sessions at all?
     "enabled": ${llm.claudeCode.enabled},
-    // Block at this % of Claude's weekly limit (window "weekly"/"seven_day").
+    // Block at this % of Claude's weekly limit (window "weekly").
     "weeklyBlockAtPercent": ${pct(llm.claudeCode.weeklyBlockAtPercent)},
     // Block at this % of Claude's 5-hour limit (window "five_hour").
     "rolling5hBlockAtPercent": ${pct(llm.claudeCode.rolling5hBlockAtPercent)}

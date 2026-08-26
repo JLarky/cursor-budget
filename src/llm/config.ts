@@ -9,7 +9,7 @@ import { ConfigFileSchema } from "../config-schema.js";
 
 export interface ClaudeCodeConfig {
   enabled: boolean;
-  /** Block at this % of Claude's weekly limit (vendor `weekly` / `seven_day` window). */
+  /** Block at this % of Claude's weekly limit (vendor `weekly` window). */
   weeklyBlockAtPercent: number;
   /** Block at this % of Claude's 5h limit (vendor `five_hour` window). */
   rolling5hBlockAtPercent: number;
@@ -119,7 +119,7 @@ export function renderLlmConfigFile(c: LlmConfig): string {
   "claudeCode": {
     // Gate Claude Code sessions at all?
     "enabled": ${c.claudeCode.enabled},
-    // Block at this % of Claude's weekly limit (window "weekly"/"seven_day").
+    // Block at this % of Claude's weekly limit (window "weekly").
     "weeklyBlockAtPercent": ${pct(c.claudeCode.weeklyBlockAtPercent)},
     // Block at this % of Claude's 5-hour limit (window "five_hour").
     "rolling5hBlockAtPercent": ${pct(c.claudeCode.rolling5hBlockAtPercent)}
@@ -143,4 +143,3 @@ export function renderLlmConfigFile(c: LlmConfig): string {
 }
 
 export { ensureLlmConfig, formatSharedConfigFile, loadLlmConfigForRead, writeLlmConfig } from "../unified-config.js";
-

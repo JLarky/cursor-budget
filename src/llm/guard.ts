@@ -128,8 +128,7 @@ function buildMeasurements(
 
   if (agent === "claude") {
     const measurements: WindowMeasurement[] = [];
-    // Vendor APIs label the weekly window "weekly"; older snapshots used "seven_day".
-    const weekly = window("seven_day") ?? window("weekly");
+    const weekly = window("weekly");
     if (weekly) {
       measurements.push({
         windowId: "claudeWeekly",
@@ -156,7 +155,7 @@ function buildMeasurements(
     return measurements;
   }
 
-  const session = window("session") ?? window("weekly");
+  const session = window("session");
   if (!session) return [];
   return [
     {
