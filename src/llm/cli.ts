@@ -15,8 +15,10 @@ import {
   loadLlmConfigForRead,
   writeLlmConfig,
 } from "./config.js";
-import { installCodexShim, uninstallCodexShim, codexShimInstalled } from "./codex-shim.js";
 import { runWatchdog } from "./codex-watchdog.js";
+import { installCodexHooks, uninstallCodexHooks, codexHooksInstalled } from "./codex-install.js";
+import { installCodexShim, codexShimInstalled } from "./codex-shim.js";
+import { handleCodexHook, readCodexHookEvent, CodexHookInputError, type CodexHookEvent } from "./codex-hook.js";
 import { getState, openLlmDb, setState } from "./db.js";
 import { runGuard } from "./guard.js";
 import {
@@ -75,11 +77,16 @@ async function main(): Promise<void> {
     case "codex": {
       const sub = rest[0];
       if (sub === "install") {
-        process.stdout.write(`${installCodexShim()}\n`);
+        process.stdout.write(`${installCodexHooks()}\n`);
         return;
       }
       if (sub === "uninstall") {
-        process.stdout.write(uninstallCodexShim());
+        process.stdout.write(uninstallCodexHooks());
+        return;
+      }
+      if (sub === "hook") {
+        const event = await readCodexHookEvent();
+        await respondToCodexHook(event);
         return;
       }
       if (sub === undefined || sub === "-h" || sub === "--help" || sub === "help") {
@@ -208,10 +215,12 @@ async function respondToClaudeHook(event: ClaudeHookEvent): Promise<void> {
     );
     return;
   }
+
   if (response.block && response.message) {
     blockClaudeHook(response.eventName, response.message);
     return;
   }
+
   // Allow: silent success.
 }
 
@@ -224,6 +233,14 @@ async function respondToClaudeHook(event: ClaudeHookEvent): Promise<void> {
 function blockClaudeHook(_eventName: string, message: string): void {
   process.stderr.write(`${message}\n`);
   process.exit(2);
+}
+
+async function respondToCodexHook(event: CodexHookEvent): Promise<void> {
+  const response = await handleCodexHook(event);
+  if (response.block && response.message) {
+    process.stderr.write(`${response.message}\n`);
+    process.exit(2);
+  }
 }
 
 const CURSOR_HELP = `llm-budget cursor — Cursor Agent usage guard
@@ -258,11 +275,12 @@ Commands:
 const CODEX_SCOPE_HELP = `llm-budget codex \u2014 Codex guard
 
 Commands:
-  llm-budget codex install      Install the PATH shim that wraps the codex binary
-  llm-budget codex uninstall    Remove the PATH shim
+  llm-budget codex install      Register native UserPromptSubmit + PreToolUse hooks
+  llm-budget codex uninstall    Remove native hooks
+  llm-budget codex hook         Used by installed hooks
   llm-budget codex help         This text
 
-Pair with the sidecar enforcer:
+Optional legacy startup belt:
   llm-budget watchdog [--interval <duration>] [--once]
 `;
 
@@ -276,7 +294,7 @@ Usage:
 
 Scopes \u2014 every agent supports: install | uninstall | help
   llm-budget claude help        Claude Code \u2014 native hooks in ~/.claude/settings.json
-  llm-budget codex help         Codex CLI \u2014 PATH shim + sidecar watchdog
+  llm-budget codex help         Codex CLI \u2014 native hooks (optional PATH shim)
   llm-budget cursor help        Cursor Agent \u2014 dashboard API + ~/.cursor/hooks.json
 
 Claude Code, Codex, and Cursor Agent share ~/.config/llm-budget/config.jsonc.
@@ -319,6 +337,7 @@ async function statusCommand(home = homedir()): Promise<string> {
       lines.push(`  Hooks: ${formatInstallState(claudeHooksInstalled(home), "llm-budget claude install")}`);
     } else {
       lines.push(`  Shim: ${formatInstallState(codexShimInstalled(home), "llm-budget codex install")}`);
+      lines.push(`  Hooks: ${formatInstallState(codexHooksInstalled(home), "llm-budget codex install")}`);
     }
     if (!enabled) {
       lines.push("  disabled in config");
@@ -458,7 +477,12 @@ function formatInstallState(installed: boolean, installCommand: string): string 
 }
 
 function installAll(home = homedir()): string {
-  const sections = [installClaudeHooks(home), installCodexShim(home), cursorInstallCommand(home)];
+  const sections = [
+    installClaudeHooks(home),
+    installCodexHooks(home),
+    installCodexShim(home),
+    cursorInstallCommand(home),
+  ];
   return `${sections.map((section) => section.trimEnd()).join("\n\n")}\n`;
 }
 
@@ -485,6 +509,12 @@ main().catch((error) => {
         "  llm-budget status",
       ].join("\n"),
     );
+    return;
+  }
+  if (argv[0] === "codex" && argv[1] === "hook") {
+    const detail = error instanceof CodexHookInputError ? message : `unexpected hook failure: ${message}`;
+    process.stderr.write(`llm-budget could not verify your budget:\n  ${detail}\n\nBlocked because enforcement.failClosed is on (the default).\n\nRecover with:\n  llm-budget override 30m\n  llm-budget status\n`);
+    process.exit(2);
     return;
   }
   if (argv[0] === "codex-guard" || argv[0] === "watchdog") {

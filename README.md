@@ -8,7 +8,7 @@ One binary, one scope per agent:
 
 ```sh
 llm-budget claude install  # Claude Code   — Anthropic usage API + native hooks
-llm-budget codex install   # Codex         — OpenAI usage API + shim + watchdog
+llm-budget codex install   # Codex         — OpenAI usage API + native hooks
 llm-budget cursor install  # Cursor Agent  — dashboard API + ~/.cursor/hooks.json
 ```
 
@@ -34,7 +34,7 @@ npm install
 npm run build
 
 llm-budget claude install    # register Claude Code hooks
-llm-budget codex install     # write the Codex PATH shim (then add it to PATH)
+llm-budget codex install     # register Codex native hooks
 llm-budget cursor install    # register Cursor Agent hooks
 ```
 
@@ -65,26 +65,21 @@ billed, and blocking it would only make Claude keep working.
 
 ### Codex
 
-Codex has no deny hooks, so enforcement is layered:
+Codex enforcement uses native hooks:
 
 ```sh
-llm-budget codex install                # writes ~/.local/share/llm-budget/bin/codex shim
-export PATH="$HOME/.local/share/llm-budget/bin:$PATH"   # put it in your shell profile
-llm-budget watchdog                     # sidecar poller (default interval 15s)
+llm-budget codex install                # writes ~/.codex/hooks.json
 ```
 
-- **Shim**: installed as a `codex` entrypoint; consults the guard, then execs
-  the real binary. Gates *starting* Codex.
-- **Watchdog**: re-evaluates every few seconds and SIGTERMs codex processes
-  while the weekly cap remains exceeded. The desktop notification fires only
-  on the trip transition. Kills re-arm when usage recovers (reset / override).
-- Optional instead of the poller: register `notify` in `~/.codex/config.toml`
-  to run `llm-budget codex-guard` after each turn.
+Native `UserPromptSubmit` and `PreToolUse` hooks deny with stderr and exit 2.
+The PATH shim is an optional startup belt for older Codex versions; the
+watchdog is legacy and is never installed automatically.
 
-**Known gaps:** a single long-running turn can overshoot between watchdog
-ticks; anything that bypasses the shim (absolute paths, shell aliases made
-before install) skips the startup gate; the watchdog kills by process
-matching, which could miss renamed binaries.
+**Known gaps:** Codex `UserPromptSubmit` historically fails open if a hook
+crashes or times out, so `failClosed` cannot make Codex itself fail closed.
+`PreToolUse` is Bash-first and file/MCP tools may not fire; `UserPromptSubmit`
+is the reliable next-turn gate. `notify` is fire-and-forget after billing and
+is not a primary gate.
 
 ### Cursor Agent
 
@@ -188,8 +183,8 @@ Every agent supports `install | uninstall | help` under its scope.
 | `llm-budget` / `status` / `usage` | all three agents |
 | `llm-budget claude install` | register Claude Code hooks |
 | `llm-budget claude uninstall` | remove Claude Code hooks |
-| `llm-budget codex install` | install the Codex PATH shim |
-| `llm-budget codex uninstall` | remove the Codex PATH shim |
+| `llm-budget codex install` | register Codex native hooks |
+| `llm-budget codex uninstall` | remove Codex native hooks |
 | `llm-budget cursor install` | register Cursor Agent hooks |
 | `llm-budget cursor uninstall [--purge-data]` | remove Cursor Agent hooks |
 | `llm-budget watchdog [--interval <duration>] [--once]` | stop running Codex sessions on trip |
