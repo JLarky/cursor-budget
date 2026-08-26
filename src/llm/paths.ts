@@ -38,3 +38,7 @@ export function codexHooksPath(home = homedir()): string {
 export function codexHookWrapperPath(home = homedir()): string {
   return join(dataDir(home), "bin", "codex-hook");
 }
+
+export function codexHookStatePath(home = homedir()): string {
+  return join(dataDir(home), "codex-hooks-state.json");
+}
