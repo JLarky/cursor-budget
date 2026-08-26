@@ -51,7 +51,7 @@ const CLAUDE_SNAPSHOT = () =>
     {
       providerId: "claude",
       windows: [
-        { id: "seven_day", label: "Weekly", usedPct: 10, resetsAt: "2026-08-31T00:00:00.000Z" },
+        { id: "weekly", label: "Weekly", usedPct: 10, resetsAt: "2026-08-31T00:00:00.000Z" },
         { id: "five_hour", label: "Session", usedPct: 5 },
       ],
     },
@@ -77,7 +77,7 @@ test("claude gates on weekly and 5h windows", async () => {
     {
       providerId: "claude",
       windows: [
-        { id: "seven_day", label: "Weekly", usedPct: 85 },
+        { id: "weekly", label: "Weekly", usedPct: 85 },
         { id: "five_hour", label: "Session", usedPct: 5 },
       ],
     },
@@ -153,7 +153,7 @@ test("a missing gate window is unknown usage, not a pass", async () => {
   const partial = snapshot([
     {
       providerId: "claude",
-      windows: [{ id: "seven_day", label: "Weekly", usedPct: 10 }],
+      windows: [{ id: "weekly", label: "Weekly", usedPct: 10 }],
     },
   ]);
   const decision = await runGuard("claude", config({}), { fetchUsage: () => partial });
@@ -193,7 +193,7 @@ test("override and exceptions bypass every gate", async () => {
   assert.equal(exempted.allow, true);
 });
 
-test("claude weekly window is matched under either vendor naming", async () => {
+test("claude weekly window uses the normalized vendor id", async () => {
   const forkNaming = snapshot([
     {
       providerId: "claude",

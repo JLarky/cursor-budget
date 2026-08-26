@@ -43,7 +43,7 @@ function claudeSnapshot(
 }
 
 const UNDER_THRESHOLD = claudeSnapshot([
-  { id: "seven_day", label: "Weekly", usedPct: 50 },
+  { id: "weekly", label: "Weekly", usedPct: 50 },
   { id: "five_hour", label: "Session", usedPct: 10 },
 ]);
 
@@ -61,7 +61,7 @@ test("allows when usage is below both thresholds", async () => {
 
 test("blocks UserPromptSubmit past the weekly threshold with escape hatches", async () => {
   const over = claudeSnapshot([
-    { id: "seven_day", label: "Weekly", usedPct: 85 },
+    { id: "weekly", label: "Weekly", usedPct: 85 },
     { id: "five_hour", label: "Session", usedPct: 10 },
   ]);
   const response = await handleClaudeHook(
@@ -77,7 +77,7 @@ test("blocks UserPromptSubmit past the weekly threshold with escape hatches", as
 
 test("rolling 5h window blocks independently of the weekly gate", async () => {
   const rollingOver = claudeSnapshot([
-    { id: "seven_day", label: "Weekly", usedPct: 10 },
+    { id: "weekly", label: "Weekly", usedPct: 10 },
     { id: "five_hour", label: "Session", usedPct: 90 },
   ]);
   const response = await handleClaudeHook(
@@ -101,7 +101,7 @@ test("excluded sessions bypass every gate", async () => {
   const config = baseConfig();
   config.excludeSessionIds = ["sess-1234"];
   const over = claudeSnapshot([
-    { id: "seven_day", label: "Weekly", usedPct: 99 },
+    { id: "weekly", label: "Weekly", usedPct: 99 },
     { id: "five_hour", label: "Session", usedPct: 99 },
   ]);
   const response = await handleClaudeHook(
@@ -116,7 +116,7 @@ test("override bypasses gates", async () => {
   const { openLlmDb, setState } = await import("./db.js");
   setState(openLlmDb(home), "override_until", new Date(Date.now() + 3_600_000).toISOString());
   const over = claudeSnapshot([
-    { id: "seven_day", label: "Weekly", usedPct: 99 },
+    { id: "weekly", label: "Weekly", usedPct: 99 },
     { id: "five_hour", label: "Session", usedPct: 99 },
   ]);
   const response = await handleClaudeHook(
@@ -166,7 +166,7 @@ test("non-enforce events never block", async () => {
 
 test("hook event without session id still formats a usable block message", async () => {
   const over = claudeSnapshot([
-    { id: "seven_day", label: "Weekly", usedPct: 99 },
+    { id: "weekly", label: "Weekly", usedPct: 99 },
     { id: "five_hour", label: "Session", usedPct: 99 },
   ]);
   const response = await handleClaudeHook(

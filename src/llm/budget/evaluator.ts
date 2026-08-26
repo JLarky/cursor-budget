@@ -77,7 +77,7 @@ export function evaluateBudget(input: {
   ) {
     reasons.push({
       windowId: "usageUnknown",
-      windowLabel: "Transcript usage",
+      windowLabel: "Provider usage",
       detail: input.usageUnknownReason,
     });
   }

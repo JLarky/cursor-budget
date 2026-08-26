@@ -11,8 +11,8 @@ function measurement(overrides: Partial<WindowMeasurement> = {}): WindowMeasurem
     label: "Weekly budget",
     usedPct: 10,
     blockAtPct: 80,
-    usedDisplay: "1,000,000 tokens",
-    denomDisplay: "10,000,000 tokens / week",
+    usedDisplay: "10%",
+    denomDisplay: "provider weekly limit",
     ...overrides,
   };
 }
@@ -104,11 +104,11 @@ test("failClosed turns unknown usage into a block with detail", () => {
     overrideUntil: null,
     now: NOW,
     failClosed: true,
-    usageUnknownReason: "all 3 transcript files failed to read",
+    usageUnknownReason: "provider usage could not be read",
   });
   assert.equal(blocked.allow, false);
   assert.equal(blocked.reasons[0]?.windowId, "usageUnknown");
-  assert.equal(blocked.reasons[0]?.detail, "all 3 transcript files failed to read");
+  assert.equal(blocked.reasons[0]?.detail, "provider usage could not be read");
 
   // failOpen only blocks when a real threshold trips.
   const open = evaluateBudget({

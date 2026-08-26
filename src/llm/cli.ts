@@ -341,7 +341,7 @@ async function statusCommand(home = homedir()): Promise<string> {
         lines.push("  No usage windows reported yet");
       }
       for (const w of provider.windows) {
-        const weekly = w.id === "seven_day" || w.id === "weekly";
+        const weekly = w.id === "weekly";
         const blockAt =
           agent === "claude"
             ? weekly
@@ -364,7 +364,9 @@ async function statusCommand(home = homedir()): Promise<string> {
     lines.push(
       `  Exceptions: ${config.excludeSessionIds.length > 0 ? config.excludeSessionIds.join(", ") : "none"}`,
     );
-    lines.push("  On unknown usage: block (failClosed)");
+    lines.push(
+      `  On unknown usage: ${config.enforcement.failClosed ? "block (failClosed)" : "allow (failClosed off)"}`,
+    );
   }
 
   // Cursor Agent is a peer of Claude Code and Codex in this view.
