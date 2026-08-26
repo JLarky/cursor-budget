@@ -61,7 +61,9 @@ test("malformed hooks.json survives install and uninstall byte-for-byte", () => 
   writeState(home, "/hooks.json:user_prompt_submit:0:0", "sha256:ours");
   assert.match(installCodexHooks(home), /malformed/);
   assert.equal(readFileSync(codexHooksPath(home), "utf8"), original);
-  uninstallCodexHooks(home);
+  const result = uninstallCodexHooks(home);
+  assert.match(result, /left untouched because it is malformed/);
+  assert.doesNotMatch(result, /Removed llm-budget Codex hooks from .*hooks\.json/);
   assert.equal(readFileSync(codexHooksPath(home), "utf8"), original);
 });
 

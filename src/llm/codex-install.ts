@@ -198,7 +198,8 @@ export function uninstallCodexHooks(home = homedir()): string {
     }
   }
   const hooks = config.hooks;
-  let changed = false;
+  let hooksChanged = false;
+  let trustChanged = false;
   if (typeof hooks === "object" && hooks !== null) {
     for (const event of EVENTS) {
     const map = hooks as Record<string, unknown>;
@@ -207,7 +208,7 @@ export function uninstallCodexHooks(home = homedir()): string {
       .map((group) => {
         const filtered = (group?.hooks ?? []).filter((hook) => !owned(hook, wrapper));
         if (filtered.length !== (group?.hooks ?? []).length) {
-          changed = true;
+          hooksChanged = true;
         }
         return { ...group, hooks: filtered };
       })
@@ -231,17 +232,28 @@ export function uninstallCodexHooks(home = homedir()): string {
         if (current && typeof current === "object" &&
             (current as { trusted_hash?: unknown }).trusted_hash === owned.trusted_hash) {
           delete (state as Record<string, unknown>)[owned.key];
-          changed = true;
+          trustChanged = true;
         }
       }
       writeFileSync(configPath, stringifyToml(toml));
     }
   }
   writeOwnedState(home, []);
-  if (changed && hooksParsed && existsSync(path)) {
+  if (hooksChanged && hooksParsed && existsSync(path)) {
     writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
   }
-  return changed ? `Removed llm-budget Codex hooks from ${path}\n` : "No llm-budget Codex hooks found.\n";
+  const lines: string[] = [];
+  if (!hooksParsed) {
+    lines.push(
+      `Warning: ${path} was left untouched because it is malformed; owned entries may still be present until you repair it and re-run uninstall.`,
+    );
+  } else if (hooksChanged) {
+    lines.push(`Removed llm-budget Codex hooks from ${path}`);
+  } else {
+    lines.push("No llm-budget Codex hooks found.");
+  }
+  if (trustChanged) lines.push(`Removed llm-budget Codex trust state from ${configPath}`);
+  return `${lines.join("\n")}\n`;
 }
 export function codexHooksInstalled(home = homedir()): boolean {
   try {
