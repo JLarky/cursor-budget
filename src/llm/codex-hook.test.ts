@@ -20,7 +20,10 @@ function usage(usedPct: number): () => Promise<UsageSnapshot> {
       displayName: "Codex",
       status: "available",
       planLabel: null,
-      windows: [{ id: "session", label: "Session", usedPct, resetsAt: null }],
+      windows: [
+        { id: "session", label: "Session", usedPct, resetsAt: null },
+        { id: "weekly", label: "Weekly", usedPct, resetsAt: null },
+      ],
       error: null,
     }],
   });

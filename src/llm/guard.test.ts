@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DEFAULT_CONFIG, type LlmConfig } from "./config.js";
-import { runGuard } from "./guard.js";
+import { formatGuardDeny, runGuard } from "./guard.js";
 import type { UsageSnapshot } from "./usage/index.js";
 import { tempHome } from "../test-home.js";
 
@@ -91,29 +91,83 @@ test("claude gates on weekly and 5h windows", async () => {
   assert.equal(reason.resetsAt, null);
 });
 
-test("codex gates on the OpenAI session window with threshold override", async () => {
+test("codex displays both OpenAI windows but enforces weekly only", async () => {
   const codex = () =>
     snapshot([
       {
         providerId: "codex",
-        windows: [{ id: "session", label: "Session", usedPct: 2, resetsAt: "2026-08-31T16:04:13.000Z" }],
+        windows: [
+          { id: "session", label: "Session", usedPct: 2, resetsAt: "2026-08-26T09:24:26.000Z" },
+          { id: "weekly", label: "Weekly", usedPct: 13, resetsAt: "2026-08-31T16:04:13.000Z" },
+        ],
       },
     ]);
 
   const allowed = await runGuard("codex", config({}), { fetchUsage: codex });
   assert.equal(allowed.allow, true);
+  assert.equal(allowed.evaluation.reasons.length, 0);
 
-  // current + 1 percent headroom, then current - 1: the literal ±1 test.
-  const tight = await runGuard("codex", config({ codexOpenAiBlockAt: 3 }), { fetchUsage: codex });
-  assert.equal(tight.allow, true);
+});
 
-  const denied = await runGuard("codex", config({ codexOpenAiBlockAt: 1 }), { fetchUsage: codex });
-  assert.equal(denied.allow, false);
-  const reason = denied.evaluation.reasons[0];
-  assert.equal(reason.windowLabel, "Weekly (OpenAI)");
-  assert.equal(reason.usedPct, 2);
-  assert.equal(reason.blockAtPct, 1);
-  assert.equal(reason.resetsAt, "2026-08-31T16:04:13.000Z");
+test("codex session usage does not block when weekly usage is under threshold", async () => {
+  const decision = await runGuard("codex", config({ codexOpenAiBlockAt: 80 }), {
+    fetchUsage: () =>
+      snapshot([{ providerId: "codex", windows: [
+        { id: "session", label: "Session", usedPct: 90, resetsAt: "2026-08-26T09:24:26.000Z" },
+        { id: "weekly", label: "Weekly", usedPct: 10, resetsAt: "2026-08-31T16:04:13.000Z" },
+      ] }]),
+  });
+  assert.equal(decision.allow, true);
+});
+
+test("codex weekly usage blocks and message includes both windows", async () => {
+  const decision = await runGuard("codex", config({ codexOpenAiBlockAt: 80 }), {
+    fetchUsage: () =>
+      snapshot([{ providerId: "codex", windows: [
+        { id: "session", label: "Session", usedPct: 10, resetsAt: "2026-08-26T09:24:26.000Z" },
+        { id: "weekly", label: "Weekly", usedPct: 90, resetsAt: "2026-08-31T16:04:13.000Z" },
+      ] }]),
+  });
+  assert.equal(decision.allow, false);
+  assert.equal(decision.evaluation.reasons.length, 1);
+  assert.equal(decision.evaluation.reasons[0]?.windowLabel, "Weekly (OpenAI)");
+  assert.equal(decision.evaluation.reasons[0]?.usedPct, 90);
+  assert.equal(decision.evaluation.reasons[0]?.resetsAt, "2026-08-31T16:04:13.000Z");
+  const message = formatGuardDeny(decision, "codex");
+  assert.match(message, /Weekly \(OpenAI\)/);
+  assert.match(message, /90%/);
+  assert.match(message, /2026-08-31T16:04:13.000Z/);
+  assert.match(message, /Session \(OpenAI 5h\)/);
+  assert.match(message, /10%/);
+  assert.match(message, /2026-08-26T09:24:26.000Z/);
+});
+
+test("codex keeps the weekly gate when the session window is omitted", async () => {
+  const decision = await runGuard("codex", config({}), {
+    fetchUsage: () =>
+      snapshot([
+        {
+          providerId: "codex",
+          windows: [{ id: "weekly", label: "Weekly", usedPct: 13 }],
+        },
+      ]),
+  });
+  assert.equal(decision.allow, true);
+});
+
+test("codex fails closed when the required weekly window is omitted", async () => {
+  const decision = await runGuard("codex", config({}), {
+    fetchUsage: () =>
+      snapshot([
+        {
+          providerId: "codex",
+          windows: [{ id: "session", label: "Session", usedPct: 0 }],
+        },
+      ]),
+  });
+  assert.equal(decision.allow, false);
+  assert.equal(decision.evaluation.reasons[0]?.windowId, "usageUnknown");
+  assert.match(decision.evaluation.reasons[0]?.detail ?? "", /codexWeekly/);
 });
 
 test("unreachable usage API fails closed with a reason", async () => {
