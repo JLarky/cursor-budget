@@ -16,7 +16,12 @@ import {
   writeLlmConfig,
 } from "./config.js";
 import { runWatchdog } from "./codex-watchdog.js";
-import { installCodexHooks, uninstallCodexHooks, codexHooksInstalled } from "./codex-install.js";
+import {
+  installCodexHooks,
+  uninstallCodexHooks,
+  codexHooksInstalled,
+  codexHookTrustStatus,
+} from "./codex-install.js";
 import { installCodexShim, uninstallCodexShim, codexShimInstalled } from "./codex-shim.js";
 import { handleCodexHook, readCodexHookEvent, CodexHookInputError, type CodexHookEvent } from "./codex-hook.js";
 import { getState, openLlmDb, setState } from "./db.js";
@@ -346,7 +351,7 @@ async function statusCommand(home = homedir()): Promise<string> {
       );
       lines.push(`  Hooks: ${formatInstallState(codexHooksInstalled(home), "llm-budget codex install")}`);
       if (codexHooksInstalled(home)) {
-        lines.push("  Trust: approve hooks in Codex startup review before they can run");
+        lines.push(`  Trust: ${codexHookTrustStatus(home)}`);
       }
     }
     if (!enabled) {
@@ -490,7 +495,6 @@ function installAll(home = homedir()): string {
   const sections = [
     installClaudeHooks(home),
     installCodexHooks(home),
-    installCodexShim(home),
     cursorInstallCommand(home),
   ];
   return `${sections.map((section) => section.trimEnd()).join("\n\n")}\n`;

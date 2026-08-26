@@ -63,15 +63,16 @@ test("install registers every provider and status then reports installed", { tim
   const installed = await runCli(["install"], home);
   assert.equal(installed.code, 0);
   assert.match(installed.stdout, /Installed llm-budget Claude Code hooks/);
-  assert.match(installed.stdout, /Installed llm-budget Codex shim/);
+  assert.match(installed.stdout, /Installed llm-budget Codex native hooks/);
   assert.match(installed.stdout, /Installed llm-budget Cursor Agent hooks/);
 
   const after = await runCli(["status"], home);
   assert.equal(after.code, 0);
   assert.match(after.stdout, /Claude Code:\n  Hooks: installed\n/);
-  assert.match(after.stdout, /Codex:\n  Shim: installed\n/);
+  assert.match(after.stdout, /Codex:\n  Shim: not installed/);
+  assert.match(after.stdout, /Codex:\n(?:.*\n)*  Hooks: installed\n/);
   assert.match(after.stdout, /Cursor Agent:\n  Hooks: installed\n/);
-  assert.doesNotMatch(after.stdout, /not installed/);
+  assert.match(after.stdout, /Codex:\n  Shim: not installed/);
 });
 
 test("help lists three peer scopes and both override stores", async () => {
