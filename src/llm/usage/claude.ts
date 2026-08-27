@@ -3,6 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { jsonString, parseJsonText, type JsonValue } from "../../json-value.js";
 import { asRecord, fetchJson, finiteNumber, type FetchFn } from "./http.js";
 import { errored, unavailable, type ProviderUsage, type UsageWindow } from "./types.js";
 
@@ -20,7 +21,7 @@ export interface ClaudeFetchOptions {
   fetch?: FetchFn;
   timeoutMs?: number;
   platform?: NodeJS.Platform;
-  keychainReader?: () => Promise<unknown | null>;
+  keychainReader?: () => Promise<JsonValue | null>;
 }
 
 interface ClaudeOauth {
@@ -51,20 +52,20 @@ function planLabel(oauth: ClaudeOauth): string | null {
   return tier ? `${label} ${tier}` : label;
 }
 
-function oauthFromUnknown(raw: unknown): ClaudeOauth | null {
+function oauthFromUnknown(raw: JsonValue | null | undefined): ClaudeOauth | null {
   const root = asRecord(raw);
   const oauth = asRecord(root?.claudeAiOauth);
-  const accessToken = typeof oauth?.accessToken === "string" ? oauth.accessToken.trim() : "";
+  const accessToken = jsonString(oauth?.accessToken)?.trim() ?? "";
   if (!oauth || !accessToken) return null;
   return {
     accessToken,
-    refreshToken: typeof oauth.refreshToken === "string" ? oauth.refreshToken : undefined,
-    subscriptionType: typeof oauth.subscriptionType === "string" ? oauth.subscriptionType : undefined,
-    rateLimitTier: typeof oauth.rateLimitTier === "string" ? oauth.rateLimitTier : undefined,
+    refreshToken: jsonString(oauth.refreshToken) ?? undefined,
+    subscriptionType: jsonString(oauth.subscriptionType) ?? undefined,
+    rateLimitTier: jsonString(oauth.rateLimitTier) ?? undefined,
   };
 }
 
-async function readKeychain(): Promise<unknown | null> {
+async function readKeychain(): Promise<JsonValue | null> {
   try {
     const { stdout } = await execFileAsync(
       "security",
@@ -72,7 +73,7 @@ async function readKeychain(): Promise<unknown | null> {
       { timeout: 2_000 },
     );
     const raw = stdout.trim();
-    return raw ? JSON.parse(raw) : null;
+    return raw ? parseJsonText(raw) : null;
   } catch {
     return null;
   }
@@ -83,7 +84,7 @@ async function readCredentials(options: ClaudeFetchOptions): Promise<ClaudeCreds
   const filePath = join(dir, ".credentials.json");
   if (existsSync(filePath)) {
     try {
-      const oauth = oauthFromUnknown(JSON.parse(readFileSync(filePath, "utf8")));
+      const oauth = oauthFromUnknown(parseJsonText(readFileSync(filePath, "utf8")));
       if (oauth) return { oauth, filePath };
     } catch {
       // Fall through to Keychain on macOS.
@@ -101,16 +102,16 @@ async function readCredentials(options: ClaudeFetchOptions): Promise<ClaudeCreds
 function windowFromUtilization(
   id: string,
   label: string,
-  raw: unknown,
+  raw: JsonValue | null | undefined,
 ): UsageWindow | null {
   const rec = asRecord(raw);
   if (!rec) return null;
   const usedPct = finiteNumber(rec.utilization);
-  const resetsAt = typeof rec.resets_at === "string" ? rec.resets_at : null;
+  const resetsAt = jsonString(rec.resets_at);
   return { id, label, usedPct, resetsAt };
 }
 
-function windowsFromUsage(json: unknown): UsageWindow[] {
+function windowsFromUsage(json: JsonValue | null | undefined): UsageWindow[] {
   const rec = asRecord(json);
   if (!rec) return [];
   const windows: UsageWindow[] = [];
@@ -124,7 +125,7 @@ function windowsFromUsage(json: unknown): UsageWindow[] {
 async function callUsage(
   token: string,
   options: ClaudeFetchOptions,
-): Promise<{ kind: "ok"; json: unknown } | { kind: "auth" } | { kind: "error"; detail: string }> {
+): Promise<{ kind: "ok"; json: JsonValue } | { kind: "auth" } | { kind: "error"; detail: string }> {
   try {
     const res = await fetchJson(
       USAGE_URL,
@@ -171,11 +172,11 @@ async function refreshToken(
       options,
     );
     const rec = asRecord(res.json);
-    const accessToken = typeof rec?.access_token === "string" ? rec.access_token : "";
+    const accessToken = jsonString(rec?.access_token) ?? "";
     if (!res.status || res.status >= 300 || !accessToken) return null;
     return {
       accessToken,
-      refreshToken: typeof rec?.refresh_token === "string" ? rec.refresh_token : undefined,
+      refreshToken: jsonString(rec?.refresh_token) ?? undefined,
     };
   } catch {
     return null;
@@ -184,15 +185,18 @@ async function refreshToken(
 
 function saveCredentials(filePath: string, oauth: ClaudeOauth): void {
   try {
-    const existing = asRecord(JSON.parse(readFileSync(filePath, "utf8"))) ?? {};
-    existing.claudeAiOauth = {
-      ...asRecord(existing.claudeAiOauth),
-      accessToken: oauth.accessToken,
-      refreshToken: oauth.refreshToken,
-      subscriptionType: oauth.subscriptionType,
-      rateLimitTier: oauth.rateLimitTier,
+    const existing = asRecord(parseJsonText(readFileSync(filePath, "utf8"))) ?? {};
+    const next = {
+      ...existing,
+      claudeAiOauth: {
+        ...asRecord(existing.claudeAiOauth),
+        accessToken: oauth.accessToken,
+        refreshToken: oauth.refreshToken,
+        subscriptionType: oauth.subscriptionType,
+        rateLimitTier: oauth.rateLimitTier,
+      },
     };
-    writeFileSync(filePath, `${JSON.stringify(existing, null, 2)}\n`, { mode: 0o600 });
+    writeFileSync(filePath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
   } catch {
     // Non-fatal: Claude Code can refresh on its own next time.
   }

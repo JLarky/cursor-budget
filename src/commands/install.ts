@@ -3,6 +3,13 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureConfig } from "../config.js";
+import {
+  asJsonArray,
+  asJsonObject,
+  emptyJsonObject,
+  parseJsonText,
+  type JsonValue,
+} from "../json-value.js";
 import { hookWrapperPath, hooksJsonPath } from "../paths.js";
 
 /** Events the guard actually handles (enforce + record). */
@@ -20,13 +27,10 @@ const HOOK_EVENTS = [
 /** Old events we no longer handle — strip leftover entries on install. */
 const OBSOLETE_HOOK_EVENTS = ["preCompact"] as const;
 
-function isLlmBudgetEntry(entry: unknown): boolean {
-  return (
-    typeof entry === "object" &&
-    entry !== null &&
-    "command" in entry &&
-    String((entry as { command: string }).command).includes("llm-budget")
-  );
+function isLlmBudgetEntry(entry: JsonValue): boolean {
+  const obj = asJsonObject(entry);
+  if (!obj || !("command" in obj)) return false;
+  return String(obj.command).includes("llm-budget");
 }
 
 export function installCommand(home = homedir()): string {
@@ -57,24 +61,25 @@ exec "$NODE" ${JSON.stringify(cli)} cursor hook
   );
   chmodSync(wrapper, 0o755);
 
-  let hooks: { version: number; hooks: Record<string, unknown[]> } = {
-    version: 1,
-    hooks: {},
-  };
+  let settings = emptyJsonObject();
+  settings.version = 1;
+  settings.hooks = emptyJsonObject();
   if (existsSync(hooksPath)) {
-    hooks = JSON.parse(readFileSync(hooksPath, "utf8"));
-    hooks.hooks ??= {};
+    const parsed = asJsonObject(parseJsonText(readFileSync(hooksPath, "utf8")));
+    if (parsed) settings = parsed;
   }
+  const hookMap = asJsonObject(settings.hooks) ?? emptyJsonObject();
+  settings.hooks = hookMap;
 
   for (const event of OBSOLETE_HOOK_EVENTS) {
-    const list = Array.isArray(hooks.hooks[event]) ? hooks.hooks[event] : [];
+    const list = asJsonArray(hookMap[event]) ?? [];
     const next = list.filter((entry) => !isLlmBudgetEntry(entry));
-    if (next.length === 0) delete hooks.hooks[event];
-    else hooks.hooks[event] = next;
+    if (next.length === 0) delete hookMap[event];
+    else hookMap[event] = next;
   }
 
   for (const event of HOOK_EVENTS) {
-    const list = Array.isArray(hooks.hooks[event]) ? hooks.hooks[event] : [];
+    const list = asJsonArray(hookMap[event]) ?? [];
     const already = list.some(isLlmBudgetEntry);
     if (!already) {
       list.push({
@@ -82,10 +87,10 @@ exec "$NODE" ${JSON.stringify(cli)} cursor hook
         failClosed: false,
       });
     }
-    hooks.hooks[event] = list;
+    hookMap[event] = list;
   }
 
-  writeFileSync(hooksPath, `${JSON.stringify(hooks, null, 2)}\n`);
+  writeFileSync(hooksPath, `${JSON.stringify(settings, null, 2)}\n`);
   return [
     "Installed llm-budget Cursor Agent hooks",
     `  ${hooksPath}`,
@@ -97,11 +102,11 @@ export function cursorHooksInstalled(home = homedir()): boolean {
   const hooksPath = hooksJsonPath(home);
   if (!existsSync(hooksPath) || !existsSync(hookWrapperPath(home))) return false;
   try {
-    const hooks = JSON.parse(readFileSync(hooksPath, "utf8")) as {
-      hooks?: Record<string, unknown[]>;
-    };
+    const settings = asJsonObject(parseJsonText(readFileSync(hooksPath, "utf8")));
+    const hookMap = asJsonObject(settings?.hooks);
+    if (!hookMap) return false;
     return HOOK_EVENTS.every((event) => {
-      const list = Array.isArray(hooks.hooks?.[event]) ? hooks.hooks[event] : [];
+      const list = asJsonArray(hookMap[event]) ?? [];
       return list.some(isLlmBudgetEntry);
     });
   } catch {

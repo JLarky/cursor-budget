@@ -1,3 +1,5 @@
+import type { JsonValue } from "../json-value.js";
+
 export interface CursorHookEvent {
   hook_event_name?: string;
   conversation_id?: string;
@@ -6,7 +8,7 @@ export interface CursorHookEvent {
   model_id?: string;
   prompt?: string;
   text?: string;
-  [key: string]: unknown;
+  [key: string]: JsonValue | undefined;
 }
 
 export interface AccountingProvider {

@@ -1,5 +1,6 @@
 import * as v from "valibot";
 import { ConfigFileSchema } from "../config-schema.js";
+import type { JsonValue } from "../json-value.js";
 
 /**
  * Percent-only configuration: every gate compares a provider-reported
@@ -64,7 +65,7 @@ export class LlmConfigError extends Error {
 }
 
 /** Parse + validate a raw config file object into a fully-resolved config. */
-export function parseLlmConfig(raw: unknown): LlmConfig {
+export function parseLlmConfig(raw: JsonValue | LlmConfig): LlmConfig {
   let parsed: v.InferOutput<typeof ConfigFileSchema>;
   try {
     parsed = v.parse(ConfigFileSchema, raw);

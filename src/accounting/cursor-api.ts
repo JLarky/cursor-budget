@@ -2,6 +2,16 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import type { DatabaseSync } from "node:sqlite";
 import { getState, openDb, setState } from "../db/client.js";
+import {
+  asJsonObject,
+  emptyJsonObject,
+  jsonBoolean,
+  jsonFiniteNumber,
+  jsonString,
+  parseJsonText,
+  type JsonObject,
+  type JsonValue,
+} from "../json-value.js";
 import { cliAuthPath } from "../paths.js";
 
 const PERIOD_USAGE_URL =
@@ -180,10 +190,10 @@ export class CursorTimeoutError extends Error {
 export class CursorUsageUnavailableError extends Error {
   readonly causeError?: unknown;
 
-  constructor(message: string, causeError?: unknown) {
+  constructor(message: string, cause?: unknown) {
     super(message);
     this.name = "CursorUsageUnavailableError";
-    this.causeError = causeError;
+    this.causeError = cause;
   }
 }
 
@@ -213,28 +223,33 @@ function centsToUsd(cents: number): number {
   return cents / 100;
 }
 
-function asNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim() !== "") {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : null;
+function asNumber(value: JsonValue | null | undefined): number | null {
+  return jsonFiniteNumber(value);
+}
+
+function asString(value: JsonValue | null | undefined): string | null {
+  return jsonString(value);
+}
+
+function asBoolean(value: JsonValue | null | undefined): boolean | null {
+  return jsonBoolean(value);
+}
+
+function stringList(value: JsonValue | undefined): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const item of value) {
+    const s = jsonString(item);
+    if (s !== null) out.push(s);
   }
-  return null;
-}
-
-function asString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
-}
-
-function asBoolean(value: unknown): boolean | null {
-  return typeof value === "boolean" ? value : null;
+  return out;
 }
 
 /**
  * Parse Cursor's billing-cycle fields (unix ms as string or number).
  * Returns `null` when absent/unparseable — cycle dates are optional.
  */
-export function parseCursorTimestamp(value: unknown): Date | null {
+export function parseCursorTimestamp(value: JsonValue | null | undefined): Date | null {
   if (value === undefined || value === null || value === "") return null;
   const n = asNumber(value);
   if (n == null) return null;
@@ -250,28 +265,27 @@ export function readCliAuth(home = homedir()): CliAuthFile {
   try {
     raw = readFileSync(path, "utf8");
   } catch (error) {
-    const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+    const code = error instanceof Error && "code" in error ? String(error.code) : "";
     throw new CursorAuthError(
       code === "ENOENT"
         ? `No Cursor CLI auth at ${path}. Sign in with cursor-agent, or pass accessToken / CURSOR_ACCESS_TOKEN.`
         : `Failed to read Cursor CLI auth at ${path}`,
     );
   }
-  let parsed: unknown;
+  let parsed: JsonValue;
   try {
-    parsed = JSON.parse(raw);
+    parsed = parseJsonText(raw);
   } catch {
     throw new CursorAuthError(`Invalid JSON in ${path}`);
   }
-  if (
-    !parsed ||
-    typeof parsed !== "object" ||
-    typeof (parsed as CliAuthFile).accessToken !== "string" ||
-    !(parsed as CliAuthFile).accessToken
-  ) {
+  const obj = asJsonObject(parsed);
+  const accessToken = obj ? jsonString(obj.accessToken) : null;
+  if (!obj || !accessToken) {
     throw new CursorAuthError(`Missing accessToken in ${path}`);
   }
-  return parsed as CliAuthFile;
+  const refreshToken = jsonString(obj.refreshToken);
+  if (refreshToken === null) return { accessToken };
+  return { accessToken, refreshToken };
 }
 
 /**
@@ -287,9 +301,9 @@ export function tokenExpiry(token: string): Date | null {
   const payload = token.split(".")[1];
   if (!payload) return null;
   try {
-    const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as unknown;
-    if (!claims || typeof claims !== "object") return null;
-    return parseCursorTimestamp((claims as { exp?: unknown }).exp);
+    const claims = asJsonObject(parseJsonText(Buffer.from(payload, "base64url").toString("utf8")));
+    if (!claims) return null;
+    return parseCursorTimestamp(claims.exp);
   } catch {
     return null;
   }
@@ -311,7 +325,7 @@ export function resolveAccessToken(options: GetCursorPeriodUsageOptions = {}): s
   return readCliAuth(options.home).accessToken;
 }
 
-function parsePlanUsage(raw: Record<string, unknown>): CursorPlanUsage {
+function parsePlanUsage(raw: JsonObject): CursorPlanUsage {
   const totalSpendCents = asNumber(raw.totalSpend) ?? 0;
   const includedSpendCents = asNumber(raw.includedSpend) ?? totalSpendCents;
   const bonusSpendCents = asNumber(raw.bonusSpend) ?? 0;
@@ -337,8 +351,8 @@ function parsePlanUsage(raw: Record<string, unknown>): CursorPlanUsage {
   };
 }
 
-function parseSpendLimitUsage(raw: unknown): CursorSpendLimitUsage {
-  const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+function parseSpendLimitUsage(raw: JsonValue | null | undefined): CursorSpendLimitUsage {
+  const obj = asJsonObject(raw) ?? emptyJsonObject();
   return {
     limitType: asString(obj.limitType),
     totalSpendCents: asNumber(obj.totalSpend),
@@ -352,18 +366,15 @@ function parseSpendLimitUsage(raw: unknown): CursorSpendLimitUsage {
 }
 
 /** Map Connect RPC JSON into {@link CursorPeriodUsage} (no `raw` blob). */
-export function normalizePeriodUsage(raw: unknown): CursorPeriodUsage {
-  if (!raw || typeof raw !== "object") {
+export function normalizePeriodUsage(raw: JsonValue): CursorPeriodUsage {
+  const parsed = asJsonObject(raw);
+  // Non-objects throw; JSON arrays keep the previous empty-object fallback.
+  if (parsed === null && !Array.isArray(raw)) {
     throw new CursorParseError("Expected JSON object from GetCurrentPeriodUsage");
   }
-  const body = raw as Record<string, unknown>;
-  const planRaw =
-    body.planUsage && typeof body.planUsage === "object"
-      ? (body.planUsage as Record<string, unknown>)
-      : {};
-  const autoBucketModels = Array.isArray(body.autoBucketModels)
-    ? body.autoBucketModels.filter((m): m is string => typeof m === "string")
-    : [];
+  const body = parsed ?? emptyJsonObject();
+  const planRaw = asJsonObject(body.planUsage) ?? emptyJsonObject();
+  const autoBucketModels = stringList(body.autoBucketModels);
 
   return {
     billingCycleStart: parseCursorTimestamp(body.billingCycleStart),
@@ -409,21 +420,76 @@ export function deserializePeriodUsage(raw: SerializedPeriodUsage): CursorPeriod
   };
 }
 
+function cachedPlanUsage(raw: JsonObject): CursorPlanUsage {
+  const totalSpendCents = asNumber(raw.totalSpendCents) ?? 0;
+  const includedSpendCents = asNumber(raw.includedSpendCents) ?? totalSpendCents;
+  const bonusSpendCents = asNumber(raw.bonusSpendCents) ?? 0;
+  const remainingCents = asNumber(raw.remainingCents);
+  const limitCents = asNumber(raw.limitCents);
+  return {
+    totalSpendCents,
+    includedSpendCents,
+    bonusSpendCents,
+    remainingCents,
+    limitCents,
+    totalSpendUsd: asNumber(raw.totalSpendUsd) ?? centsToUsd(totalSpendCents),
+    includedSpendUsd: asNumber(raw.includedSpendUsd) ?? centsToUsd(includedSpendCents),
+    bonusSpendUsd: asNumber(raw.bonusSpendUsd) ?? centsToUsd(bonusSpendCents),
+    remainingUsd: asNumber(raw.remainingUsd) ?? (remainingCents == null ? null : centsToUsd(remainingCents)),
+    limitUsd: asNumber(raw.limitUsd) ?? (limitCents == null ? null : centsToUsd(limitCents)),
+    autoPercentUsed: asNumber(raw.autoPercentUsed),
+    apiPercentUsed: asNumber(raw.apiPercentUsed),
+    totalPercentUsed: asNumber(raw.totalPercentUsed),
+    remainingBonus: asBoolean(raw.remainingBonus) ?? false,
+    bonusTooltip: asString(raw.bonusTooltip),
+  };
+}
+
+function cachedSpendLimitUsage(raw: JsonObject): CursorSpendLimitUsage {
+  return {
+    limitType: asString(raw.limitType),
+    totalSpendCents: asNumber(raw.totalSpendCents),
+    individualLimitCents: asNumber(raw.individualLimitCents),
+    individualUsedCents: asNumber(raw.individualUsedCents),
+    individualRemainingCents: asNumber(raw.individualRemainingCents),
+    pooledLimitCents: asNumber(raw.pooledLimitCents),
+    pooledUsedCents: asNumber(raw.pooledUsedCents),
+    pooledRemainingCents: asNumber(raw.pooledRemainingCents),
+  };
+}
+
+function serializedUsageFromJson(raw: JsonObject): SerializedPeriodUsage {
+  return {
+    billingCycleStart: jsonString(raw.billingCycleStart),
+    billingCycleEnd: jsonString(raw.billingCycleEnd),
+    planUsage: cachedPlanUsage(asJsonObject(raw.planUsage) ?? emptyJsonObject()),
+    spendLimitUsage: cachedSpendLimitUsage(asJsonObject(raw.spendLimitUsage) ?? emptyJsonObject()),
+    displayThreshold: asNumber(raw.displayThreshold),
+    enabled: asBoolean(raw.enabled),
+    displayMessage: asString(raw.displayMessage),
+    autoModelSelectedDisplayMessage: asString(raw.autoModelSelectedDisplayMessage),
+    namedModelSelectedDisplayMessage: asString(raw.namedModelSelectedDisplayMessage),
+    autoBucketModels: stringList(raw.autoBucketModels),
+  };
+}
+
 export function readCachedPeriodUsage(db: DatabaseSync): { usage: CursorPeriodUsage; fetchedAt: Date } | null {
   const raw = getState(db, PERIOD_USAGE_CACHE_KEY);
   if (!raw) return null;
-  let parsed: unknown;
+  let parsed: JsonValue;
   try {
-    parsed = JSON.parse(raw);
+    parsed = parseJsonText(raw);
   } catch {
     return null;
   }
-  if (!parsed || typeof parsed !== "object") return null;
-  const row = parsed as Partial<CachedPeriodUsageRow>;
-  if (typeof row.fetchedAt !== "string" || !row.usage || typeof row.usage !== "object") return null;
-  const fetchedAt = new Date(row.fetchedAt);
+  const row = asJsonObject(parsed);
+  if (!row) return null;
+  const fetchedAtRaw = jsonString(row.fetchedAt);
+  const usageRaw = asJsonObject(row.usage);
+  if (fetchedAtRaw === null || usageRaw === null) return null;
+  const fetchedAt = new Date(fetchedAtRaw);
   if (Number.isNaN(fetchedAt.getTime())) return null;
-  return { usage: deserializePeriodUsage(row.usage), fetchedAt };
+  return { usage: deserializePeriodUsage(serializedUsageFromJson(usageRaw)), fetchedAt };
 }
 
 export function writeCachedPeriodUsage(db: DatabaseSync, usage: CursorPeriodUsage, fetchedAt: Date): void {
@@ -434,9 +500,9 @@ export function writeCachedPeriodUsage(db: DatabaseSync, usage: CursorPeriodUsag
   setState(db, PERIOD_USAGE_CACHE_KEY, JSON.stringify(row));
 }
 
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return String(error);
+function errorMessage(cause: unknown): string {
+  if (cause instanceof Error) return cause.message;
+  return String(cause);
 }
 
 /**
@@ -478,9 +544,9 @@ export async function fetchCursorPeriodUsage(
     throw new CursorApiError(response.status, text);
   }
 
-  let json: unknown;
+  let json: JsonValue;
   try {
-    json = JSON.parse(text);
+    json = parseJsonText(text);
   } catch {
     throw new CursorParseError(`Non-JSON body from GetCurrentPeriodUsage: ${truncate(text, 200)}`);
   }

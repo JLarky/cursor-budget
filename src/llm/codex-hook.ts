@@ -1,3 +1,4 @@
+import { parseJsonText } from "../json-value.js";
 import { ensureLlmConfig, type LlmConfig } from "./config.js";
 import { formatGuardDeny, runGuard, type GuardDeps, type GuardDecision } from "./guard.js";
 
@@ -31,7 +32,11 @@ export class CodexHookInputError extends Error {
 }
 export function parseCodexHookInput(raw: string): CodexHookEvent {
   if (!raw.trim()) throw new CodexHookInputError("hook produced no input on stdin");
-  try { return JSON.parse(raw) as CodexHookEvent; }
+  try {
+    const value = parseJsonText(raw);
+    // SAFETY: hook payloads are JSON objects; we only read known optional string fields.
+    return value as CodexHookEvent;
+  }
   catch (error) { throw new CodexHookInputError(`hook input is not valid JSON: ${error instanceof Error ? error.message : String(error)}`); }
 }
 export async function readCodexHookEvent(timeoutMs = 2_000): Promise<CodexHookEvent> {
@@ -42,7 +47,7 @@ export async function readCodexHookEvent(timeoutMs = 2_000): Promise<CodexHookEv
       process.stdin.off("data", onData); process.stdin.off("end", onEnd); process.stdin.off("error", onError);
       process.stdin.pause(); resolve(value);
     };
-    const onData = (chunk: string | Buffer) => { data += typeof chunk === "string" ? chunk : chunk.toString("utf8"); };
+    const onData = (chunk: string | Buffer) => { data += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk; };
     const onEnd = () => finish(data);
     const onError = (error: Error) => { if (!settled) { settled = true; clearTimeout(timer); reject(error); } };
     const timer = setTimeout(() => finish(data), timeoutMs);

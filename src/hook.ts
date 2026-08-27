@@ -18,6 +18,7 @@ import { rollingHour } from "./budget/windows.js";
 import type { Config } from "./config.js";
 import { ensureConfig } from "./config.js";
 import { getCursorOverride, hasWarning, markWarning, openDb } from "./db/client.js";
+import { parseJsonText } from "./json-value.js";
 import { notify } from "./notify.js";
 
 const ENFORCE_EVENTS = new Set([
@@ -206,11 +207,11 @@ export async function resolvePeriodUsage(
   }
 }
 
-function isAuthFailure(error: unknown): boolean {
-  if (error instanceof CursorApiError && error.status === 401) return true;
-  if (error instanceof CursorUsageUnavailableError) {
-    const cause = error.causeError;
-    if (cause instanceof CursorApiError && cause.status === 401) return true;
+function isAuthFailure(cause: unknown): boolean {
+  if (cause instanceof CursorApiError && cause.status === 401) return true;
+  if (cause instanceof CursorUsageUnavailableError) {
+    const nested = cause.causeError;
+    if (nested instanceof CursorApiError && nested.status === 401) return true;
   }
   return false;
 }
@@ -344,7 +345,7 @@ export async function readStdinJson(timeoutMs = STDIN_TIMEOUT_MS): Promise<Curso
       resolve(value);
     };
     const onData = (chunk: string | Buffer) => {
-      data += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      data += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk;
     };
     const onEnd = () => finish(data);
     const onError = (error: Error) => {
@@ -369,5 +370,7 @@ export async function readStdinJson(timeoutMs = STDIN_TIMEOUT_MS): Promise<Curso
     }
   });
   if (!raw.trim()) return {};
-  return JSON.parse(raw) as CursorHookEvent;
+  const value = parseJsonText(raw);
+  // SAFETY: hook payloads are JSON objects; we only read known optional string fields.
+  return value as CursorHookEvent;
 }

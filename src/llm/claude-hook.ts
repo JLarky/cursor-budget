@@ -1,3 +1,4 @@
+import { parseJsonText } from "../json-value.js";
 import { ensureLlmConfig, type LlmConfig } from "./config.js";
 import {
   formatGuardDeny,
@@ -121,7 +122,9 @@ export function parseClaudeHookInput(raw: string): ClaudeHookEvent {
     throw new ClaudeHookInputError("hook produced no input on stdin");
   }
   try {
-    return JSON.parse(raw) as ClaudeHookEvent;
+    const value = parseJsonText(raw);
+    // SAFETY: hook payloads are JSON objects; we only read known optional string fields.
+    return value as ClaudeHookEvent;
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new ClaudeHookInputError(`hook input is not valid JSON: ${detail}`);
@@ -148,7 +151,7 @@ export async function readClaudeHookEvent(
       resolve(value);
     };
     const onData = (chunk: string | Buffer) => {
-      data += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      data += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk;
     };
     const onEnd = () => finish(data);
     const onError = (error: Error) => {

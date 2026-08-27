@@ -7,6 +7,7 @@ import {
   type Config,
 } from "./config.js";
 import { renderUnifiedConfigFile } from "./config-render.js";
+import type { JsonValue } from "./json-value.js";
 import { parseJsonc } from "./jsonc.js";
 import {
   DEFAULT_CONFIG as llmDefault,
@@ -16,19 +17,34 @@ import {
 } from "./llm/config.js";
 import { configPath } from "./paths.js";
 
+interface LoadedRaw {
+  path: string;
+  raw: JsonValue;
+}
+
+export interface ConfigReadResult {
+  config: Config;
+  warning?: string;
+}
+
+export interface LlmConfigReadResult {
+  config: LlmConfig;
+  warning: string | null;
+}
+
 function withPath(path: string, detail: string): ConfigError {
   return new ConfigError(
     `${detail}\nConfig file: ${path}\nDelete this file to regenerate defaults.`,
   );
 }
 
-function readJsoncFile(path: string): unknown {
+function readJsoncFile(path: string): JsonValue {
   const text = readFileSync(path, "utf8");
   if (!text.trim()) return {};
   return parseJsonc(text);
 }
 
-function loadRaw(home?: string): { path: string; raw: unknown } {
+function loadRaw(home?: string): LoadedRaw {
   const path = configPath(home);
   if (!existsSync(path)) return { path, raw: {} };
   try {
@@ -45,7 +61,7 @@ function persist(home: string | undefined, llm: LlmConfig, cursor: Config): void
   writeFileSync(path, renderUnifiedConfigFile(llm, cursor));
 }
 
-function llmFromRaw(raw: unknown): LlmConfig {
+function llmFromRaw(raw: JsonValue): LlmConfig {
   try {
     return parseLlmConfig(raw);
   } catch {
@@ -53,7 +69,7 @@ function llmFromRaw(raw: unknown): LlmConfig {
   }
 }
 
-function cursorFromRaw(raw: unknown): Config {
+function cursorFromRaw(raw: JsonValue): Config {
   try {
     return parseConfig(raw);
   } catch {
@@ -75,7 +91,7 @@ export function ensureConfig(home?: string): Config {
   }
 }
 
-export function loadConfigForRead(home?: string): { config: Config; warning?: string } {
+export function loadConfigForRead(home?: string): ConfigReadResult {
   try {
     return { config: ensureConfig(home) };
   } catch (error) {
@@ -110,10 +126,7 @@ export function ensureLlmConfig(home?: string): LlmConfig {
   }
 }
 
-export function loadLlmConfigForRead(home?: string): {
-  config: LlmConfig;
-  warning: string | null;
-} {
+export function loadLlmConfigForRead(home?: string): LlmConfigReadResult {
   try {
     const path = configPath(home);
     if (!existsSync(path)) {

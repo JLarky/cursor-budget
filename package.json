@@ -19,7 +19,10 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "tsc && node --test 'dist/**/*.test.js'"
+    "lint": "oxlint && oxlint -c tools/oxlint/anti-slop/oxlint.config.ts tools/oxlint/anti-slop",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tools/oxlint/anti-slop/tsconfig.json",
+    "test": "tsc && node --test 'dist/**/*.test.js' && npm run test:anti-slop",
+    "test:anti-slop": "node tools/oxlint/anti-slop/run-tests.mjs"
   },
   "engines": {
     "node": ">=22.5.0"
@@ -36,7 +39,10 @@
     "valibot": "^1.4.2"
   },
   "devDependencies": {
+    "@oxlint/plugins": "^1.80.0",
     "@types/node": "^24.3.0",
+    "oxlint": "^1.80.0",
+    "tsx": "^4.23.12",
     "typescript": "^5.9.2"
   },
   "files": [

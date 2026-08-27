@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+import type { JsonValue } from "../../json-value.js";
 import { fetchCodexUsage } from "./codex.js";
 import { tempHome } from "../../test-home.js";
 
-function jsonResponse(status: number, body: unknown): Response {
+function jsonResponse(status: number, body: JsonValue): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json" },
@@ -34,7 +35,7 @@ test("fetchCodexUsage maps session and weekly rate-limit windows", async () => {
     home,
     fetch: async (url, init) => {
       assert.match(String(url), /wham\/usage/);
-      assert.equal((init?.headers as Record<string, string>)["ChatGPT-Account-Id"], "acct-1");
+      assert.equal(new Headers(init?.headers).get("ChatGPT-Account-Id"), "acct-1");
       return jsonResponse(200, {
         plan_type: "plus",
         rate_limit: {
@@ -83,7 +84,7 @@ test("fetchCodexUsage refreshes and retries after 401", async () => {
       if (String(url).includes("auth.openai.com")) {
         return jsonResponse(200, { access_token: "codex-access-2", refresh_token: "codex-refresh-2" });
       }
-      const auth = String((init?.headers as Record<string, string>).Authorization);
+      const auth = String(new Headers(init?.headers).get("Authorization"));
       if (auth.includes("codex-access-2")) {
         return jsonResponse(200, {
           rate_limit: { primary_window: { used_percent: 3 } },

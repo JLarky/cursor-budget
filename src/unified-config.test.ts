@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import test from "node:test";
 import { ensureConfig, parseConfig, writeConfig } from "./config.js";
 import { ensureLlmConfig, parseLlmConfig, writeLlmConfig } from "./llm/config.js";

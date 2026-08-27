@@ -80,6 +80,7 @@ export function countEvents(
     excluded.length > 0
       ? `AND (conversation_id IS NULL OR conversation_id NOT IN (${placeholders}))`
       : "";
+  // SAFETY: SELECT COUNT(*) AS n; node:sqlite returns number | bigint for that column.
   const row = db
     .prepare(
       `SELECT COUNT(*) AS n FROM usage_events
@@ -90,17 +91,26 @@ export function countEvents(
 }
 
 export function listRecentEvents(db: DatabaseSync, limit = 20): UsageRow[] {
-  return db
+  const rows = db
     .prepare(
       `SELECT timestamp, conversation_id, generation_id, event_type, model, dedupe_key
        FROM usage_events
        ORDER BY timestamp DESC
        LIMIT ?`,
     )
-    .all(limit) as unknown as UsageRow[];
+    .all(limit);
+  return rows.map((row) => ({
+    timestamp: `${row.timestamp ?? ""}`,
+    conversation_id: row.conversation_id == null ? undefined : `${row.conversation_id}`,
+    generation_id: row.generation_id == null ? undefined : `${row.generation_id}`,
+    event_type: `${row.event_type ?? ""}`,
+    model: row.model == null ? undefined : `${row.model}`,
+    dedupe_key: `${row.dedupe_key ?? ""}`,
+  }));
 }
 
 export function getState(db: DatabaseSync, key: string): string | null {
+  // SAFETY: SELECT value FROM app_state; missing rows are undefined.
   const row = db.prepare("SELECT value FROM app_state WHERE key = ?").get(key) as
     | { value: string }
     | undefined;
@@ -119,6 +129,7 @@ export function hasWarning(
   threshold: number,
   periodKey: string,
 ): boolean {
+  // SAFETY: SELECT 1 AS ok; missing rows are undefined.
   const row = db
     .prepare(
       "SELECT 1 AS ok FROM warning_emissions WHERE window_id = ? AND threshold = ? AND period_key = ?",
