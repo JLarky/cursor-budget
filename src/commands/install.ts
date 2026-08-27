@@ -53,8 +53,8 @@ if [ -z "$NODE" ]; then
   done
 fi
 if [ -z "$NODE" ]; then
-  echo '{"continue":true,"permission":"allow"}'
-  exit 0
+  echo 'llm-budget hook could not start: Node.js was not found.' >&2
+  exit 2
 fi
 exec "$NODE" ${JSON.stringify(cli)} cursor hook
 `,
@@ -80,11 +80,16 @@ exec "$NODE" ${JSON.stringify(cli)} cursor hook
 
   for (const event of HOOK_EVENTS) {
     const list = asJsonArray(hookMap[event]) ?? [];
-    const already = list.some(isLlmBudgetEntry);
-    if (!already) {
+    const existing = list.find(isLlmBudgetEntry);
+    if (existing) {
+      const entry = asJsonObject(existing);
+      if (entry) entry.failClosed = true;
+    } else {
       list.push({
         command: "./hooks/llm-budget",
-        failClosed: false,
+        // This hook is a budget boundary. Cursor must block if the wrapper
+        // crashes, times out, or returns malformed output.
+        failClosed: true,
       });
     }
     hookMap[event] = list;

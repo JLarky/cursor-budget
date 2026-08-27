@@ -14,8 +14,18 @@ test("cursor install wrapper invokes llm cli cursor hook", () => {
     assert.match(wrapper, /llm\/cli\.js/);
     assert.match(wrapper, /cursor hook/);
     assert.doesNotMatch(wrapper, /cli\.js hook/);
+    assert.match(wrapper, /Node\.js was not found/);
+    assert.match(wrapper, /exit 2/);
+    assert.doesNotMatch(wrapper, /continue\\":true/);
     assert.match(result, /Installed llm-budget Cursor Agent hooks/);
     assert.equal(cursorHooksInstalled(home), true);
+
+    const hooks = JSON.parse(readFileSync(join(home, ".cursor", "hooks.json"), "utf8")) as {
+      hooks: Record<string, Array<{ failClosed?: boolean }>>;
+    };
+    for (const entries of Object.values(hooks.hooks)) {
+      assert.equal(entries[0]?.failClosed, true);
+    }
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
