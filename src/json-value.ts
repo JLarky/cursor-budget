@@ -5,40 +5,28 @@ export type JsonObject = { [key: string]: JsonValue };
 export type JsonArray = JsonValue[];
 export type JsonValue = string | number | boolean | null | JsonObject | JsonArray;
 
-export const JsonValueSchema: v.GenericSchema<JsonValue> = v.lazy(() =>
-  v.union([
-    v.string(),
-    v.number(),
-    v.boolean(),
-    v.null(),
-    v.array(JsonValueSchema),
-    v.record(v.string(), JsonValueSchema),
-  ]),
-);
-
-export const JsonObjectSchema: v.GenericSchema<JsonObject> = v.record(
-  v.string(),
-  JsonValueSchema,
-);
-
 export function parseJsonText(text: string): JsonValue {
-  return v.parse(JsonValueSchema, JSON.parse(text));
+  const value = JSON.parse(text);
+  // SAFETY: JSON.parse without a reviver yields a JSON value.
+  return value as JsonValue;
 }
 
 export function emptyJsonObject(): JsonObject {
-  return v.parse(JsonObjectSchema, {});
+  // SAFETY: a new empty object has no keys and is a valid JSON object.
+  return {} as JsonObject;
 }
 
 export function asJsonObject(value: JsonValue | null | undefined): JsonObject | null {
   if (value === null || value === undefined || Array.isArray(value)) return null;
-  const parsed = v.safeParse(JsonObjectSchema, value);
-  return parsed.success ? parsed.output : null;
+  if (v.is(v.string(), value) || v.is(v.number(), value) || v.is(v.boolean(), value)) {
+    return null;
+  }
+  return value;
 }
 
 export function asJsonArray(value: JsonValue | null | undefined): JsonArray | null {
-  if (value === null || value === undefined) return null;
-  const parsed = v.safeParse(v.array(JsonValueSchema), value);
-  return parsed.success ? parsed.output : null;
+  if (value === null || value === undefined || !Array.isArray(value)) return null;
+  return value;
 }
 
 export function jsonString(value: JsonValue | null | undefined): string | null {
