@@ -22,7 +22,7 @@ import {
   codexHooksInstalled,
   codexHookTrustStatus,
 } from "./codex-install.js";
-import { installCodexShim, uninstallCodexShim, codexShimInstalled } from "./codex-shim.js";
+import { installCodexShim, uninstallCodexShim } from "./codex-shim.js";
 import { handleCodexHook, readCodexHookEvent, CodexHookInputError, type CodexHookEvent } from "./codex-hook.js";
 import { getState, openLlmDb, setState } from "./db.js";
 import { runGuard } from "./guard.js";
@@ -346,9 +346,6 @@ async function statusCommand(home = homedir()): Promise<string> {
     if (agent === "claude") {
       lines.push(`  Hooks: ${formatInstallState(claudeHooksInstalled(home), "llm-budget claude install")}`);
     } else {
-      lines.push(
-        `  Shim: ${codexShimInstalled(home) ? "installed" : "not installed — run llm-budget codex shim-install"}`,
-      );
       lines.push(`  Hooks: ${formatInstallState(codexHooksInstalled(home), "llm-budget codex install")}`);
       if (codexHooksInstalled(home)) {
         lines.push(`  Trust: ${codexHookTrustStatus(home)}`);
