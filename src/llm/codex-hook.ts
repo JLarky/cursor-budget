@@ -1,19 +1,19 @@
 import { parseJsonText } from "../json-value.js";
-import { ensureLlmConfig, type LlmConfig } from "./config.js";
+import { ensureConfig, type Config } from "../config.js";
 import { formatGuardDeny, runGuard, type GuardDeps, type GuardDecision } from "./guard.js";
 
 export const CODEX_ENFORCE_EVENTS = new Set(["UserPromptSubmit", "PreToolUse"]);
 export interface CodexHookEvent { hook_event_name?: string; session_id?: string; }
 export interface CodexHookResponse { block: boolean; message?: string; eventName: string; sessionId: string; }
-export interface CodexHookDeps extends GuardDeps { config?: LlmConfig; }
+export interface CodexHookDeps extends GuardDeps { config?: Config; }
 
 export async function handleCodexHook(event: CodexHookEvent, deps: CodexHookDeps = {}): Promise<CodexHookResponse> {
   const eventName = String(event.hook_event_name ?? "");
   const sessionId = String(event.session_id ?? "");
   const base = { block: false, eventName, sessionId };
   if (!CODEX_ENFORCE_EVENTS.has(eventName)) return base;
-  let config: LlmConfig;
-  try { config = deps.config ?? ensureLlmConfig(deps.home); }
+  let config: Config;
+  try { config = deps.config ?? ensureConfig(deps.home); }
   catch (error) {
     return { ...base, block: true, message: `llm-budget failed to load config: ${error instanceof Error ? error.message : String(error)}\n\nSession id: ${sessionId || "unknown"}\n\nRecover with:\n  llm-budget override 30m\n  llm-budget except add ${sessionId || "<session-id>"}` };
   }

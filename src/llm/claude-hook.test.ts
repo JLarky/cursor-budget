@@ -7,13 +7,15 @@ import {
   handleClaudeHook,
   parseClaudeHookInput,
 } from "./claude-hook.js";
-import { DEFAULT_CONFIG, type LlmConfig } from "./config.js";
+import { DEFAULT_CONFIG, type Config } from "../config.js";
 import { tempHome } from "../test-home.js";
 import type { UsageSnapshot } from "./usage/index.js";
 
-function baseConfig(overrides: Partial<LlmConfig["claudeCode"]> = {}): LlmConfig {
+function baseConfig(overrides: { fiveHourBlockAtPercent?: number } = {}): Config {
   const config = structuredClone(DEFAULT_CONFIG);
-  Object.assign(config.claudeCode, overrides);
+  if (overrides.fiveHourBlockAtPercent !== undefined) {
+    config.claude.windows.five_hour.blockAtPercent = overrides.fiveHourBlockAtPercent;
+  }
   return config;
 }
 
@@ -87,7 +89,7 @@ test("rolling 5h window blocks independently of the weekly gate", async () => {
   assert.match(response.message ?? "", /Rolling 5h budget reached/);
 
   // A tighter rolling threshold blocks where the default would not.
-  const tight = baseConfig({ rolling5hBlockAtPercent: 5 });
+  const tight = baseConfig({ fiveHourBlockAtPercent: 5 });
   const responseTight = await handleClaudeHook(
     { hook_event_name: "PreToolUse", session_id: "s-1" },
     { fetchUsage: UNDER_THRESHOLD, config: tight },

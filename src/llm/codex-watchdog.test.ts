@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import { DEFAULT_CONFIG, type LlmConfig } from "./config.js";
+import { DEFAULT_CONFIG, type Config } from "../config.js";
 import { openLlmDb, getState } from "./db.js";
 import { runWatchdog } from "./codex-watchdog.js";
 import { tempHome } from "../test-home.js";
 
 // Decisions are injected, so one config serves both tripped and clear passes.
-function anyConfig(): LlmConfig {
+function anyConfig(): Config {
   return structuredClone(DEFAULT_CONFIG);
 }
 

@@ -18,7 +18,7 @@ export class LocalEventAccountingProvider implements AccountingProvider {
 
   async countEvents(window: { from: Date; to: Date }): Promise<number> {
     const db = openDb(this.home);
-    return countEvents(db, window.from, window.to, this.config.excludeConversationIds);
+    return countEvents(db, window.from, window.to, this.config.cursor.excludeConversationIds);
   }
 
   async recordEvent(event: CursorHookEvent): Promise<void> {

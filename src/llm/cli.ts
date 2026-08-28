@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
-import { formatPercent } from "./budget/evaluator.js";
-import { parseDuration } from "./budget/windows.js";
+import { formatUsd, formatWindowLine } from "../budget/evaluator.js";
+import { parseDuration } from "../budget/windows.js";
 import {
   ClaudeHookInputError,
   handleClaudeHook,
@@ -10,11 +10,11 @@ import {
 } from "./claude-hook.js";
 import { installClaudeHooks, uninstallClaudeHooks, claudeHooksInstalled } from "./claude-install.js";
 import {
-  ensureLlmConfig,
-  formatSharedConfigFile,
-  loadLlmConfigForRead,
-  writeLlmConfig,
-} from "./config.js";
+  ensureConfig,
+  formatConfigFile,
+  loadConfigForRead,
+  writeConfig,
+} from "../config.js";
 import { runWatchdog } from "./codex-watchdog.js";
 import {
   installCodexHooks,
@@ -23,13 +23,18 @@ import {
   codexHookTrustStatus,
 } from "./codex-install.js";
 import { handleCodexHook, readCodexHookEvent, CodexHookInputError, type CodexHookEvent } from "./codex-hook.js";
+import { buildMeasurements } from "./guard.js";
 import { getState, openLlmDb, setState } from "./db.js";
+import { getCursorOverride } from "../db/client.js";
+import { configPath } from "../paths.js";
 import {
   fetchDirectUsage,
   providerUsage,
   type UsageSnapshot,
 } from "./usage/index.js";
 // Cursor Agent scope — dashboard API; config lives in ~/.config/llm-budget with the other agents.
+import { getCursorPeriodUsage } from "../accounting/cursor-api.js";
+import { buildCursorMeasurements } from "../cursor-measurements.js";
 import { exceptCommand as cursorExceptCommand } from "../commands/except.js";
 import { historyCommand as cursorHistoryCommand } from "../commands/history.js";
 import { installCommand as cursorInstallCommand, cursorHooksInstalled } from "../commands/install.js";
@@ -125,7 +130,7 @@ async function main(): Promise<void> {
       process.stdout.write(exceptCommand(rest));
       return;
     case "config": {
-      process.stdout.write(formatSharedConfigFile());
+      process.stdout.write(formatConfigFile());
       return;
     }
     case undefined:
@@ -306,10 +311,17 @@ configured percent. If usage is unknown the guards block by default
 `;
 
 async function statusCommand(home = homedir()): Promise<string> {
-  const { config, warning } = loadLlmConfigForRead(home);
+  const { config, warning } = loadConfigForRead(home);
   const db = openLlmDb(home);
+  const now = new Date();
   const lines: string[] = ["llm-budget"];
   if (warning) lines.push(warning, "");
+
+  // Global, once — not repeated per agent.
+  lines.push(`Config: ${configPath(home)}`);
+  lines.push(
+    `On unknown usage: ${config.enforcement.failClosed ? "block (failClosed)" : "allow (failClosed off)"}`,
+  );
 
   let snapshot: UsageSnapshot | null = null;
   let fetchError: string | null = null;
@@ -320,7 +332,7 @@ async function statusCommand(home = homedir()): Promise<string> {
   }
 
   for (const agent of ["claude", "codex"] as const) {
-    const enabled = agent === "claude" ? config.claudeCode.enabled : config.codex.enabled;
+    const enabled = agent === "claude" ? config.claude.enabled : config.codex.enabled;
     lines.push("");
     lines.push(agent === "claude" ? "Claude Code:" : "Codex:");
     if (agent === "claude") {
@@ -351,20 +363,8 @@ async function statusCommand(home = homedir()): Promise<string> {
       if (provider.windows.length === 0) {
         lines.push("  No usage windows reported yet");
       }
-      for (const w of provider.windows) {
-        const weekly = w.id === "weekly";
-        const blockAt =
-          agent === "claude"
-            ? weekly
-              ? config.claudeCode.weeklyBlockAtPercent
-              : config.claudeCode.rolling5hBlockAtPercent
-            : (config.codex.openAiWeeklyBlockAtPercent ?? config.codex.weeklyBlockAtPercent);
-        const pct =
-          w.usedPct !== null && Number.isFinite(w.usedPct)
-            ? formatPercent(w.usedPct)
-            : "unknown";
-        const reset = w.resetsAt ? ` — resets ${w.resetsAt}` : "";
-        lines.push(`  ${w.label}: ${pct} of ${formatPercent(blockAt)} block threshold${reset}`);
+      for (const m of buildMeasurements(agent, config, provider)) {
+        lines.push(`  ${formatWindowLine(m)}`);
       }
     }
 
@@ -375,44 +375,48 @@ async function statusCommand(home = homedir()): Promise<string> {
     lines.push(
       `  Exceptions: ${config.excludeSessionIds.length > 0 ? config.excludeSessionIds.join(", ") : "none"}`,
     );
-    lines.push(
-      `  On unknown usage: ${config.enforcement.failClosed ? "block (failClosed)" : "allow (failClosed off)"}`,
-    );
   }
 
   // Cursor Agent is a peer of Claude Code and Codex in this view.
-  // Dashboard auth may be unavailable offline — render whatever it reports.
   lines.push("");
   lines.push("Cursor Agent:");
   lines.push(`  Hooks: ${formatInstallState(cursorHooksInstalled(home), "llm-budget cursor install")}`);
-  try {
-    const raw = await cursorStatusCommand(home);
-    const allLines = raw.split("\n");
-    const titleIdx = allLines.findIndex((l) => l.trim() === "llm-budget");
-    const body = (titleIdx >= 0 ? allLines.slice(titleIdx + 1) : allLines)
-      .map((l) => {
-        // Collapse multi-line API/auth failure detail into one peer-style line
-        // so an offline Cursor does not visually dominate the output.
-        const m = l.match(/^\s*Period usage: unavailable \(([^)]*)\)\s*$/);
-        if (!m) return l;
-        return "Dashboard quota: unavailable — sign in with cursor-agent";
-      })
-      .filter((l) => l.trim() !== "");
-    if (body.length === 0) {
-      lines.push("  no status available");
-    } else {
-      for (const l of body) lines.push(`  ${l}`);
+  if (!config.cursor.enabled) {
+    lines.push("  disabled in config");
+  } else {
+    try {
+      const result = await getCursorPeriodUsage({ home, cacheTtlMs: config.cursor.cacheTtlMs, now });
+      const plan = result.usage.planUsage;
+      for (const m of buildCursorMeasurements(config, plan)) {
+        lines.push(`  ${formatWindowLine(m)}`);
+      }
+      lines.push(
+        `  Period spend: ${
+          plan.limitUsd != null
+            ? `${formatUsd(plan.totalSpendUsd)} / ${formatUsd(plan.limitUsd)}`
+            : formatUsd(plan.totalSpendUsd)
+        }`,
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message.split(":")[0] : String(error);
+      lines.push(`  Dashboard usage: unavailable (${detail}) — sign in with cursor-agent`);
     }
-  } catch (error) {
-    const detail = error instanceof Error ? error.message.split(":")[0] : String(error);
-    lines.push(`  Dashboard quota: unavailable (${detail}) — sign in with cursor-agent`);
+    const cursorOverrideRaw = getCursorOverride(openLlmDb(home));
+    lines.push(`  Override: ${cursorOverrideRaw ? `until ${cursorOverrideRaw}` : "none"}`);
+    lines.push(
+      `  Exceptions: ${
+        config.cursor.excludeConversationIds.length > 0
+          ? config.cursor.excludeConversationIds.join(", ")
+          : "none"
+      }`,
+    );
   }
 
   return `${lines.join("\n")}\n`;
 }
 
 function overrideCommand(spec: string | undefined): string {
-  ensureLlmConfig();
+  ensureConfig();
   const db = openLlmDb();
   if (!spec || spec === "off") {
     setState(db, "override_until", "");
@@ -428,7 +432,7 @@ function overrideCommand(spec: string | undefined): string {
 }
 
 function exceptCommand(args: string[], home = homedir()): string {
-  const config = ensureLlmConfig(home);
+  const config = ensureConfig(home);
   const [actionOrId, maybeId] = args;
   if (!actionOrId || actionOrId === "list") {
     return formatList(config.excludeSessionIds);
@@ -437,7 +441,7 @@ function exceptCommand(args: string[], home = homedir()): string {
     const id = maybeId?.trim() ?? "";
     if (!id) throw new Error("Usage: llm-budget except remove <session-id>");
     const next = config.excludeSessionIds.filter((existing) => existing !== id);
-    writeLlmConfig({ ...config, excludeSessionIds: next }, home);
+    writeConfig({ ...config, excludeSessionIds: next }, home);
     return next.length === config.excludeSessionIds.length
       ? `No exception for ${id}.\n`
       : `Removed exception for ${id}.\n${formatList(next)}`;
@@ -455,7 +459,7 @@ function exceptCommand(args: string[], home = homedir()): string {
     return `Already excepted: ${id}\n${formatList(config.excludeSessionIds)}`;
   }
   const next = [...config.excludeSessionIds, id];
-  writeLlmConfig({ ...config, excludeSessionIds: next }, home);
+  writeConfig({ ...config, excludeSessionIds: next }, home);
   return `Excepted ${id}. It will bypass every gate.\n${formatList(next)}`;
 }
 

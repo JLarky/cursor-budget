@@ -4,39 +4,51 @@ const percent0to100 = v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(1
 const nonNegativeFinite = v.pipe(v.number(), v.finite(), v.minValue(0));
 const warningFraction = v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(1));
 
-export const ClaudeCodeSchema = v.strictObject({
+/**
+ * One usage window. `blockAtPercent` is a number to enforce at that
+ * threshold, or `null` for monitor-only: measured and shown in status, but
+ * never blocks. There is no inheritance between windows or agents — every
+ * window states its own value.
+ */
+export const WindowSchema = v.strictObject({
+  blockAtPercent: v.optional(v.nullable(percent0to100)),
+});
+
+export const ClaudeSchema = v.strictObject({
   enabled: v.optional(v.boolean()),
-  weeklyBlockAtPercent: v.optional(percent0to100),
-  rolling5hBlockAtPercent: v.optional(percent0to100),
+  windows: v.optional(
+    v.strictObject({
+      weekly: v.optional(WindowSchema),
+      five_hour: v.optional(WindowSchema),
+    }),
+  ),
 });
 
 export const CodexSchema = v.strictObject({
   enabled: v.optional(v.boolean()),
-  weeklyBlockAtPercent: v.optional(percent0to100),
-  openAiWeeklyBlockAtPercent: v.optional(v.nullable(percent0to100)),
-});
-
-export const QuotaSchema = v.strictObject({
-  cursorModelsBlockAtPercent: v.optional(percent0to100),
-  otherModelsBlockAtPercent: v.optional(percent0to100),
-  totalBlockAtPercent: v.optional(v.nullable(percent0to100)),
-  maxStaleMs: v.optional(nonNegativeFinite),
-  cacheTtlMs: v.optional(nonNegativeFinite),
-});
-
-export const RateLimitSchema = v.strictObject({
-  maxEventsPerHour: v.optional(v.nullable(v.pipe(v.number(), v.finite(), v.minValue(0)))),
-});
-
-export const CursorSliceSchema = v.strictObject({
-  quota: v.optional(QuotaSchema),
-  rateLimit: v.optional(RateLimitSchema),
-  warnings: v.optional(v.array(warningFraction)),
-  enforcement: v.optional(
+  windows: v.optional(
     v.strictObject({
-      failClosed: v.optional(v.boolean()),
+      weekly: v.optional(WindowSchema),
+      session: v.optional(WindowSchema),
     }),
   ),
+});
+
+export const CursorSchema = v.strictObject({
+  enabled: v.optional(v.boolean()),
+  windows: v.optional(
+    v.strictObject({
+      cursorModels: v.optional(WindowSchema),
+      otherModels: v.optional(WindowSchema),
+      total: v.optional(WindowSchema),
+    }),
+  ),
+  rateLimit: v.optional(
+    v.strictObject({ maxEventsPerHour: v.optional(v.nullable(nonNegativeFinite)) }),
+  ),
+  maxStaleMs: v.optional(nonNegativeFinite),
+  cacheTtlMs: v.optional(nonNegativeFinite),
+  warnings: v.optional(v.array(warningFraction)),
   excludeConversationIds: v.optional(v.array(v.string())),
 });
 
@@ -44,18 +56,13 @@ export const CursorSliceSchema = v.strictObject({
 export const ConfigFileSchema = v.strictObject({
   $schema: v.optional(v.string()),
   _comment: v.optional(v.string()),
-  claudeCode: v.optional(ClaudeCodeSchema),
+  claude: v.optional(ClaudeSchema),
   codex: v.optional(CodexSchema),
-  cursor: v.optional(CursorSliceSchema),
-  // Top-level Cursor fields: writeConfig round-trips a resolved Config object.
-  quota: v.optional(QuotaSchema),
-  rateLimit: v.optional(RateLimitSchema),
-  warnings: v.optional(v.array(warningFraction)),
+  cursor: v.optional(CursorSchema),
   enforcement: v.optional(
     v.strictObject({
       failClosed: v.optional(v.boolean()),
     }),
   ),
   excludeSessionIds: v.optional(v.array(v.pipe(v.string(), v.trim(), v.minLength(1)))),
-  excludeConversationIds: v.optional(v.array(v.string())),
 });

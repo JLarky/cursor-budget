@@ -8,15 +8,15 @@ export function exceptCommand(args: string[], home?: string): string {
   const config = ensureConfig(home);
   const [actionOrId, maybeId] = args;
   if (!actionOrId || actionOrId === "list") {
-    return formatList(config.excludeConversationIds);
+    return formatList(config.cursor.excludeConversationIds);
   }
 
   if (actionOrId === "remove" || actionOrId === "rm") {
     const id = maybeId ? normalizeId(maybeId) : "";
     if (!id) throw new Error("Usage: llm-budget cursor except remove <session-id>");
-    const next = config.excludeConversationIds.filter((existing) => existing !== id);
-    writeConfig({ ...config, excludeConversationIds: next }, home);
-    return next.length === config.excludeConversationIds.length
+    const next = config.cursor.excludeConversationIds.filter((existing) => existing !== id);
+    writeConfig({ ...config, cursor: { ...config.cursor, excludeConversationIds: next } }, home);
+    return next.length === config.cursor.excludeConversationIds.length
       ? `No exception for ${id}.\n`
       : `Removed exception for ${id}.\n${formatList(next)}`;
   }
@@ -30,11 +30,11 @@ export function exceptCommand(args: string[], home?: string): string {
   if (!id || (actionOrId === "add" && !maybeId) || id.startsWith("-")) {
     throw new Error("Usage: llm-budget cursor except add <session-id>");
   }
-  if (config.excludeConversationIds.includes(id)) {
-    return `Already excepted: ${id}\n${formatList(config.excludeConversationIds)}`;
+  if (config.cursor.excludeConversationIds.includes(id)) {
+    return `Already excepted: ${id}\n${formatList(config.cursor.excludeConversationIds)}`;
   }
-  const next = [...config.excludeConversationIds, id];
-  writeConfig({ ...config, excludeConversationIds: next }, home);
+  const next = [...config.cursor.excludeConversationIds, id];
+  writeConfig({ ...config, cursor: { ...config.cursor, excludeConversationIds: next } }, home);
   return `Excepted ${id}. It will not be blocked and will not count toward the event-rate backstop.\n${formatList(next)}`;
 }
 

@@ -1,12 +1,20 @@
+/**
+ * Window ids shared by every agent's usage windows plus the local
+ * rolling-hour event-count backstop. Claude and Codex ids match the vendor's
+ * own window names; Cursor ids match the dashboard meter names.
+ */
 export type WindowId =
-  | "rollingHour"
+  | "weekly"
+  | "five_hour"
+  | "session"
   | "cursorModels"
   | "otherModels"
-  | "totalQuota"
+  | "total"
+  | "rollingHour"
   | "usageUnknown";
 
 export interface TimeWindow {
-  id: WindowId;
+  id: "rollingHour";
   from: Date;
   to: Date;
   label: string;

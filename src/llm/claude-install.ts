@@ -10,7 +10,7 @@ import {
   type JsonArray,
   type JsonValue,
 } from "../json-value.js";
-import { ensureLlmConfig } from "./config.js";
+import { ensureConfig } from "../config.js";
 import { claudeHookWrapperPath, claudeSettingsPath } from "./paths.js";
 
 /** Hook events the guard registers (enforce set only — see claude-hook.ts). */
@@ -35,7 +35,7 @@ function groupHooks(group: JsonValue): JsonArray {
  * llm-budget. Everything else is preserved verbatim.
  */
 export function installClaudeHooks(home = homedir()): string {
-  ensureLlmConfig(home);
+  ensureConfig(home);
   const wrapper = claudeHookWrapperPath(home);
   const settingsPath = claudeSettingsPath(home);
   const cli = join(fileURLToPath(new URL("./cli.js", import.meta.url)));

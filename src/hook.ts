@@ -9,14 +9,17 @@ import {
 } from "./accounting/index.js";
 import type { CursorHookEvent } from "./accounting/types.js";
 import {
-  evaluate,
+  evaluateBudget,
   formatAge,
-  formatBlockMessage,
-  formatPercentValue,
+  formatNullablePercent,
+  formatPercent,
+  formatUsd,
+  type BudgetEvaluation,
 } from "./budget/evaluator.js";
 import { rollingHour } from "./budget/windows.js";
 import type { Config } from "./config.js";
 import { ensureConfig } from "./config.js";
+import { buildCursorMeasurements } from "./cursor-measurements.js";
 import { getCursorOverride, hasWarning, markWarning, openDb } from "./db/client.js";
 import { parseJsonText } from "./json-value.js";
 import { notify } from "./notify.js";
@@ -70,7 +73,10 @@ export async function handleHook(
     return allow();
   }
 
-  const excluded = resolved.excludeConversationIds.includes(conversationId);
+  // Opting out of the guard must not be able to block it either.
+  if (!resolved.cursor.enabled) return allow();
+
+  const excluded = resolved.cursor.excludeConversationIds.includes(conversationId);
 
   try {
     return await dispatch(event, eventName, excluded, resolved, deps);
@@ -116,18 +122,20 @@ async function dispatch(
       now,
     );
     const overrideUntil = readOverrideUntil(home);
-    const decision = evaluate({
-      periodUsage,
-      usageUnknownReason,
-      eventsLastHour,
-      config,
+    const measurements = periodUsage ? buildCursorMeasurements(config, periodUsage.usage.planUsage) : [];
+    const decision = evaluateBudget({
+      measurements,
+      eventRate: { used: eventsLastHour, limit: config.cursor.rateLimit.maxEventsPerHour },
       overrideUntil,
       now,
       excluded,
+      failClosed: config.enforcement.failClosed,
+      usageUnknownReason: periodUsage ? null : (usageUnknownReason ?? "usage could not be determined"),
     });
+    decision.displayMeasurements = measurements;
 
     if (!decision.allow) {
-      const message = formatBlockMessage(
+      const message = formatCursorBlockMessage(
         decision,
         periodUsage,
         eventsLastHour,
@@ -164,7 +172,7 @@ async function dispatch(
  *
  * Never throws: every "we don't know current usage" path returns
  * `periodUsage: null` plus a human-readable `usageUnknownReason`. Deciding what
- * that means is `evaluate`'s job, which keeps override/exception short-circuits
+ * that means is `evaluateBudget`'s job, which keeps override/exception short-circuits
  * ahead of the fail-closed deny — otherwise an expired token would lock the
  * editor with no way back in.
  */
@@ -181,14 +189,14 @@ export async function resolvePeriodUsage(
   try {
     const result = await getUsage({
       home: deps.home,
-      cacheTtlMs: config.quota.cacheTtlMs,
+      cacheTtlMs: config.cursor.cacheTtlMs,
       now,
     });
 
-    if (result.source === "stale-cache" && result.ageMs > config.quota.maxStaleMs) {
+    if (result.source === "stale-cache" && result.ageMs > config.cursor.maxStaleMs) {
       return {
         periodUsage: null,
-        usageUnknownReason: `cached snapshot is ${formatAge(result.ageMs)} old (max ${formatAge(config.quota.maxStaleMs)})${result.refreshError ? `; refresh failed: ${result.refreshError}` : ""}`,
+        usageUnknownReason: `cached snapshot is ${formatAge(result.ageMs)} old (max ${formatAge(config.cursor.maxStaleMs)})${result.refreshError ? `; refresh failed: ${result.refreshError}` : ""}`,
       };
     }
     return { periodUsage: result };
@@ -270,8 +278,8 @@ function maybeWarn(
     windowId: "cursorModels",
     label: "Cursor Models",
     percentUsed: plan.autoPercentUsed,
-    blockAt: config.quota.cursorModelsBlockAtPercent,
-    warnings: config.warnings,
+    blockAt: config.cursor.windows.cursorModels.blockAtPercent,
+    warnings: config.cursor.warnings,
     periodKey,
     now,
   });
@@ -280,8 +288,8 @@ function maybeWarn(
     windowId: "otherModels",
     label: "Other Models",
     percentUsed: plan.apiPercentUsed,
-    blockAt: config.quota.otherModelsBlockAtPercent,
-    warnings: config.warnings,
+    blockAt: config.cursor.windows.otherModels.blockAtPercent,
+    warnings: config.cursor.warnings,
     periodKey,
     now,
   });
@@ -292,13 +300,13 @@ function warnMeter(input: {
   windowId: string;
   label: string;
   percentUsed: number | null;
-  blockAt: number;
+  blockAt: number | null;
   warnings: number[];
   periodKey: string;
   now: Date;
 }): void {
   const { db, windowId, label, percentUsed, blockAt, warnings, periodKey, now } = input;
-  if (percentUsed == null || !Number.isFinite(percentUsed) || !(blockAt > 0)) return;
+  if (percentUsed == null || !Number.isFinite(percentUsed) || blockAt == null || !(blockAt > 0)) return;
   // warnings are 0–1 fractions of the block threshold; API percent is 0–100.
   const ratio = percentUsed / blockAt;
   for (const threshold of warnings) {
@@ -307,9 +315,79 @@ function warnMeter(input: {
     markWarning(db, windowId, threshold, periodKey, now.toISOString());
     notify(
       "llm-budget",
-      `LLM budget: ${Math.round(ratio * 100)}% of ${label} block threshold\n${formatPercentValue(percentUsed)} used (block at ${formatPercentValue(blockAt)})`,
+      `LLM budget: ${Math.round(ratio * 100)}% of ${label} block threshold\n${formatPercent(percentUsed)} used (block at ${formatPercent(blockAt)})`,
     );
   }
+}
+
+/** Render the user-facing deny message for Cursor Agent. */
+function formatCursorBlockMessage(
+  evaluation: BudgetEvaluation,
+  periodUsage: CursorPeriodUsageResult | null,
+  eventsLastHour: number,
+  config: Config,
+  sessionId?: string,
+): string {
+  const id = sessionId?.trim() || "unknown";
+  const primary = evaluation.reasons[0];
+  const lines = ["Cursor Agent blocked by llm-budget.", "", `Session id: ${id}`, ""];
+
+  if (primary) {
+    if (primary.kind === "usageUnknown") {
+      lines.push("Usage could not be determined:");
+      lines.push(`  ${primary.detail}`);
+      lines.push("");
+      lines.push("Blocked because enforcement.failClosed is on (the default).");
+    } else if (primary.kind === "eventRate") {
+      lines.push("Rolling-hour event rate limit reached:");
+      lines.push(`  ${primary.used} / ${primary.limit} events`);
+    } else {
+      lines.push(`${primary.windowLabel} limit reached:`);
+      lines.push(
+        `  ${formatPercent(primary.usedPct)} / ${formatPercent(primary.blockAtPercent)} used`,
+      );
+    }
+    lines.push("");
+  }
+
+  if (periodUsage) {
+    const plan = periodUsage.usage.planUsage;
+    lines.push("Cursor Models:");
+    lines.push(`  ${formatNullablePercent(plan.autoPercentUsed)}`);
+    lines.push("Other Models:");
+    lines.push(`  ${formatNullablePercent(plan.apiPercentUsed)}`);
+    if (plan.limitUsd != null) {
+      lines.push("Period spend:");
+      lines.push(`  ${formatUsd(plan.totalSpendUsd)} / ${formatUsd(plan.limitUsd)}`);
+    } else {
+      lines.push("Period spend:");
+      lines.push(`  ${formatUsd(plan.totalSpendUsd)}`);
+    }
+    const reset = periodUsage.usage.billingCycleEnd;
+    if (reset) {
+      lines.push(`Cycle resets: ${reset.toLocaleString()}`);
+    }
+    if (periodUsage.stale || periodUsage.source === "stale-cache") {
+      lines.push(`Snapshot: stale (${formatAge(periodUsage.ageMs)}, source ${periodUsage.source})`);
+    } else {
+      lines.push(`Snapshot: ${periodUsage.source} (age ${formatAge(periodUsage.ageMs)})`);
+    }
+    lines.push("");
+  }
+
+  const maxEvents = config.cursor.rateLimit.maxEventsPerHour;
+  lines.push("Events (last 60m):");
+  lines.push(
+    maxEvents != null
+      ? `  ${eventsLastHour} / ${maxEvents}`
+      : `  ${eventsLastHour} (no rate limit)`,
+  );
+  lines.push("");
+  lines.push("Run:");
+  lines.push("  llm-budget cursor status");
+  lines.push("  llm-budget cursor override 30m");
+  lines.push(`  llm-budget cursor except add ${id}`);
+  return lines.join("\n");
 }
 
 function allow(userMessage?: string): HookResponse {

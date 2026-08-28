@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { PERIOD_USAGE_CACHE_KEY } from "../accounting/cursor-api.js";
-import { DEFAULT_CONFIG, writeConfig } from "../config.js";
+import { DEFAULT_CONFIG, ensureConfig, writeConfig } from "../config.js";
 import { openDb, setCursorOverride, setState } from "../db/client.js";
 import {
   asJsonArray,
@@ -42,7 +42,8 @@ export function uninstallCommand(purgeData: boolean, home = homedir()): string {
 
   const lines = ["Removed llm-budget Cursor Agent hook entries and wrapper."];
   if (purgeData) {
-    writeConfig(structuredClone(DEFAULT_CONFIG), home);
+    const current = ensureConfig(home);
+    writeConfig({ ...current, cursor: structuredClone(DEFAULT_CONFIG.cursor) }, home);
     const db = openDb(home);
     setCursorOverride(db, "");
     setState(db, PERIOD_USAGE_CACHE_KEY, "");
