@@ -6,7 +6,7 @@ export function configDir(home = homedir()): string {
   return join(home, ".config", "llm-budget");
 }
 
-/** SQLite, Claude hook wrapper, Codex PATH shim. */
+/** SQLite and hook wrappers. */
 export function dataDir(home = homedir()): string {
   return join(home, ".local", "share", "llm-budget");
 }

@@ -75,9 +75,8 @@ Native `UserPromptSubmit` and `PreToolUse` hooks deny with stderr and exit 2.
 After installation, Codex's startup hook review must trust the hooks before
 they execute; until that interactive review is completed, hooks are
 `untrusted` and Codex will skip them (including in `codex exec`). The status
-output calls this out. The PATH shim is an optional startup belt for older
-Codex versions or automation that cannot perform the review; the watchdog is
-legacy and is never installed automatically.
+output calls this out. The watchdog is optional and is never installed
+automatically.
 
 To verify a hook in non-interactive CI, use Codex's explicit trust override:
 `codex exec --dangerously-bypass-hook-trust "hi"`. A blocked run prints

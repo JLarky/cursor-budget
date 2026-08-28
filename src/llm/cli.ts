@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
-import { formatBudgetBlockMessage, formatPercent } from "./budget/evaluator.js";
+import { formatPercent } from "./budget/evaluator.js";
 import { parseDuration } from "./budget/windows.js";
 import {
   ClaudeHookInputError,
@@ -22,10 +22,8 @@ import {
   codexHooksInstalled,
   codexHookTrustStatus,
 } from "./codex-install.js";
-import { installCodexShim, uninstallCodexShim, codexShimInstalled } from "./codex-shim.js";
 import { handleCodexHook, readCodexHookEvent, CodexHookInputError, type CodexHookEvent } from "./codex-hook.js";
 import { getState, openLlmDb, setState } from "./db.js";
-import { runGuard } from "./guard.js";
 import {
   fetchDirectUsage,
   providerUsage,
@@ -85,12 +83,8 @@ async function main(): Promise<void> {
         process.stdout.write(`${installCodexHooks()}\n`);
         return;
       }
-      if (sub === "shim-install") {
-        process.stdout.write(`${installCodexShim()}\n`);
-        return;
-      }
       if (sub === "uninstall") {
-        process.stdout.write(`${uninstallCodexHooks()}${uninstallCodexShim()}`);
+        process.stdout.write(uninstallCodexHooks());
         return;
       }
       if (sub === "hook") {
@@ -113,19 +107,6 @@ async function main(): Promise<void> {
       const intervalMs =
         intervalFlag >= 0 ? (parseDuration(rest[intervalFlag + 1] ?? "") ?? undefined) : undefined;
       await runWatchdog({ once, intervalMs });
-      return;
-    }
-    case "codex-guard": {
-      // Strict config on purpose: an unreadable config must fail closed here,
-      // so use ensureLlmConfig and let the top-level handler exit non-zero.
-      const config = ensureLlmConfig();
-      const decision = await runGuard("codex", config);
-      if (!decision.allow) {
-        process.stderr.write(
-          `${formatBudgetBlockMessage(decision.evaluation, "codex", decision.sessionId)}\n`,
-        );
-        process.exit(2);
-      }
       return;
     }
     case "install": {
@@ -285,9 +266,8 @@ const CODEX_SCOPE_HELP = `llm-budget codex \u2014 Codex guard
 
 Commands:
   llm-budget codex install      Register native UserPromptSubmit + PreToolUse hooks
-  llm-budget codex uninstall    Remove native hooks and optional shim
+  llm-budget codex uninstall    Remove native hooks
   llm-budget codex hook         Used by installed hooks
-  llm-budget codex shim-install Install the optional PATH startup shim
   llm-budget codex help         This text
 
 Optional legacy startup belt:
@@ -304,7 +284,7 @@ Usage:
 
 Scopes \u2014 every agent supports: install | uninstall | help
   llm-budget claude help        Claude Code \u2014 native hooks in ~/.claude/settings.json
-  llm-budget codex help         Codex CLI \u2014 native hooks (optional PATH shim)
+  llm-budget codex help         Codex CLI \u2014 native hooks
   llm-budget cursor help        Cursor Agent \u2014 dashboard API + ~/.cursor/hooks.json
 
 Claude Code, Codex, and Cursor Agent share ~/.config/llm-budget/config.jsonc.
@@ -346,9 +326,6 @@ async function statusCommand(home = homedir()): Promise<string> {
     if (agent === "claude") {
       lines.push(`  Hooks: ${formatInstallState(claudeHooksInstalled(home), "llm-budget claude install")}`);
     } else {
-      lines.push(
-        `  Shim: ${codexShimInstalled(home) ? "installed" : "not installed — run llm-budget codex shim-install"}`,
-      );
       lines.push(`  Hooks: ${formatInstallState(codexHooksInstalled(home), "llm-budget codex install")}`);
       if (codexHooksInstalled(home)) {
         lines.push(`  Trust: ${codexHookTrustStatus(home)}`);
@@ -531,8 +508,7 @@ main().catch((error) => {
     process.exit(2);
     return;
   }
-  if (argv[0] === "codex-guard" || argv[0] === "watchdog") {
-    // The shim treats any non-zero exit as blocked: failing closed.
+  if (argv[0] === "watchdog") {
     process.stderr.write(`llm-budget ${argv[0]} failed: ${message}\n`);
     process.exit(2);
   }

@@ -22,15 +22,6 @@ export function claudeHookWrapperPath(home = homedir()): string {
   return join(dataDir(home), "bin", "claude-hook");
 }
 
-export function codexShimDir(home = homedir()): string {
-  return join(dataDir(home), "bin");
-}
-
-/** Installed as a `codex` entrypoint; put this dir first on PATH. */
-export function codexShimPath(home = homedir()): string {
-  return join(codexShimDir(home), "codex");
-}
-
 export function codexHooksPath(home = homedir()): string {
   return join(home, ".codex", "hooks.json");
 }
