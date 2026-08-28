@@ -8,12 +8,15 @@ import { tempHome } from "../test-home.js";
 function config(overrides: {
   claudeEnabled?: boolean;
   codexEnabled?: boolean;
+  claudeFiveHourBlockAt?: number | null;
   codexSessionBlockAt?: number | null;
   failClosed?: boolean;
 }): Config {
   const c = structuredClone(DEFAULT_CONFIG);
   if (overrides.claudeEnabled !== undefined) c.claude.enabled = overrides.claudeEnabled;
   if (overrides.codexEnabled !== undefined) c.codex.enabled = overrides.codexEnabled;
+  if (overrides.claudeFiveHourBlockAt !== undefined)
+    c.claude.windows.five_hour.blockAtPercent = overrides.claudeFiveHourBlockAt;
   if (overrides.codexSessionBlockAt !== undefined)
     c.codex.windows.session.blockAtPercent = overrides.codexSessionBlockAt;
   if (overrides.failClosed !== undefined) c.enforcement.failClosed = overrides.failClosed;
@@ -233,20 +236,68 @@ test("missing provider entry or windows count as unknown usage", async () => {
   }
 });
 
-test("a missing gate window is unknown usage, not a pass", async () => {
-  const partial = snapshot([
-    {
-      providerId: "claude",
-      windows: [{ id: "weekly", label: "Weekly", usedPct: 10 }],
-    },
-  ]);
-  const decision = await runGuard("claude", config({}), { fetchUsage: () => partial });
+test("claude keeps the weekly gate when the five_hour window is omitted", async () => {
+  const decision = await runGuard("claude", config({}), {
+    fetchUsage: () =>
+      snapshot([
+        {
+          providerId: "claude",
+          windows: [{ id: "weekly", label: "Weekly", usedPct: 10 }],
+        },
+      ]),
+  });
+  assert.equal(decision.allow, true);
+});
+
+test("claude still enforces weekly when five_hour is omitted", async () => {
+  const decision = await runGuard("claude", config({}), {
+    fetchUsage: () =>
+      snapshot([
+        {
+          providerId: "claude",
+          windows: [{ id: "weekly", label: "Weekly", usedPct: 85 }],
+        },
+      ]),
+  });
+  assert.equal(decision.allow, false);
+  const reason = decision.evaluation.reasons[0];
+  assert.equal(reason?.kind, "window");
+  if (reason?.kind !== "window") throw new Error("expected window reason");
+  assert.equal(reason.windowLabel, "Weekly");
+});
+
+test("claude five_hour with null threshold does not require the API window", async () => {
+  const decision = await runGuard("claude", config({ claudeFiveHourBlockAt: null }), {
+    fetchUsage: () =>
+      snapshot([
+        {
+          providerId: "claude",
+          windows: [{ id: "weekly", label: "Weekly", usedPct: 10 }],
+        },
+      ]),
+  });
+  assert.equal(decision.allow, true);
+  assert.equal(
+    decision.evaluation.displayMeasurements?.find((m) => m.windowId === "five_hour"),
+    undefined,
+  );
+});
+
+test("claude fails closed when the required weekly window is omitted", async () => {
+  const decision = await runGuard("claude", config({}), {
+    fetchUsage: () =>
+      snapshot([
+        {
+          providerId: "claude",
+          windows: [{ id: "five_hour", label: "Session", usedPct: 5 }],
+        },
+      ]),
+  });
   assert.equal(decision.allow, false);
   const reason = decision.evaluation.reasons[0];
   assert.equal(reason?.kind, "usageUnknown");
-  if (reason?.kind === "usageUnknown") {
-    assert.match(reason.detail, /five_hour/);
-  }
+  if (reason?.kind !== "usageUnknown") throw new Error("expected usageUnknown reason");
+  assert.match(reason.detail, /weekly/);
 });
 
 test("override and exceptions bypass every gate", async () => {

@@ -402,7 +402,12 @@ async function statusCommand(home = homedir()): Promise<string> {
       lines.push(`  Dashboard usage: unavailable (${detail}) — sign in with cursor-agent`);
     }
     const cursorOverrideRaw = getCursorOverride(openLlmDb(home));
-    lines.push(`  Override: ${cursorOverrideRaw ? `until ${cursorOverrideRaw}` : "none"}`);
+    const cursorOverrideUntil = cursorOverrideRaw ? new Date(cursorOverrideRaw) : null;
+    const cursorOverrideActive =
+      cursorOverrideUntil && cursorOverrideUntil.getTime() > now.getTime();
+    lines.push(
+      `  Override: ${cursorOverrideActive ? `until ${cursorOverrideUntil?.toLocaleString()}` : "none"}`,
+    );
     lines.push(
       `  Exceptions: ${
         config.cursor.excludeConversationIds.length > 0

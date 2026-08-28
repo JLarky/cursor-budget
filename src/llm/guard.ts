@@ -186,15 +186,15 @@ export function buildMeasurements(
   return measurements;
 }
 
-/** Every configured gate must have a measurement, else usage is unknown. */
+/**
+ * Only the primary weekly gate must be present for usage to be "known".
+ * Secondary windows (Claude five_hour, Codex session) are optional — omitted
+ * or monitor-only (null threshold) and never fail-closed as missing gates.
+ */
 function missingGates(agent: GuardAgent, measurements: WindowMeasurement[]): string | null {
   const present = new Set(measurements.map((m) => m.windowId));
-  // Session/five_hour windows are informational and optional; weekly is the
-  // one every agent must report to be considered "known".
-  const needed = agent === "claude" ? (["weekly", "five_hour"] as const) : (["weekly"] as const);
-  const missing = needed.filter((id) => !present.has(id));
-  if (missing.length === 0) return null;
-  return `Usage API did not report the ${missing.join(", ")} window(s) for ${agent}`;
+  if (present.has("weekly")) return null;
+  return `Usage API did not report the weekly window(s) for ${agent}`;
 }
 
 function pctDisplay(usedPct: number | null): string {

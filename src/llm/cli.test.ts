@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { rmSync } from "node:fs";
 import { tempHome } from "../test-home.js";
+import { setCursorOverride, openDb } from "../db/client.js";
 import { runCli } from "./cli-testkit.js";
 
 test("status covers all three agents", { timeout: 60_000 }, async () => {
@@ -19,6 +21,20 @@ test("status covers all three agents", { timeout: 60_000 }, async () => {
   // Every agent block carries its own escape-hatch state.
   assert.equal(result.stdout.split("Override:").length - 1 >= 3, true);
   assert.doesNotMatch(result.stdout, /\(claude\+codex\)/);
+});
+
+test("expired Cursor override is not shown as active in combined status", { timeout: 60_000 }, async () => {
+  const home = tempHome("llm-budget-cli-ovr-");
+  try {
+    setCursorOverride(openDb(home), new Date(Date.now() - 60_000).toISOString());
+    const result = await runCli(["status"], home);
+    assert.equal(result.code, 0);
+    const cursorBlock = result.stdout.split("Cursor Agent:")[1] ?? "";
+    assert.match(cursorBlock, /Override: none/);
+    assert.doesNotMatch(cursorBlock, /Override: until/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("install registers every provider and status then reports installed", { timeout: 60_000 }, async () => {
