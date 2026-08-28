@@ -34,11 +34,9 @@ export interface WatchdogPassResult {
  * Sidecar poller that stops already-running Codex sessions once the weekly
  * budget trips.
  *
- * The shim only gates *starting* Codex — it cannot reach inside a running
- * turn. This loop re-evaluates every few seconds and SIGTERMs codex processes
- * every poll while the budget remains exceeded, so a process that started
- * later through an absolute path (bypassing the shim) or shrugged off the
- * first SIGTERM is still caught. The trip latch only gates the desktop
+ * This loop re-evaluates every few seconds and SIGTERMs codex processes every
+ * poll while the budget remains exceeded, so a process that starts later or
+ * shrugs off the first SIGTERM is still caught. The trip latch only gates the desktop
  * notification/log transition so one trip doesn't spam; it clears when usage
  * drops back under the threshold (override/exception/reset).
  */
@@ -101,7 +99,8 @@ async function watchdogPass(
     setState(db, "codex_watchdog_trip", "active");
 
     // Kill on EVERY tripped pass: new codex processes can appear mid-trip
-    // (shim bypass) and survivors of a previous SIGTERM may still be alive.
+    // New processes may appear mid-trip, and survivors of a previous SIGTERM
+    // may still be alive.
     const targets = (deps.listCodexProcesses ?? defaultListCodexProcesses)().filter(
       ({ pid }) => pid !== process.pid,
     );
@@ -111,7 +110,7 @@ async function watchdogPass(
       if (kill(target.pid)) killedPids.push(target.pid);
     }
 
-    // Print the same block message the shim would have shown.
+    // Print the guard's block message.
     process.stderr.write(
       `${formatGuardDeny(decision, "codex", decision.sessionId)}\n`,
     );

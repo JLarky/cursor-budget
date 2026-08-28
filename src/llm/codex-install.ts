@@ -20,7 +20,7 @@ import {
   type JsonValue,
 } from "../json-value.js";
 import { ensureLlmConfig } from "./config.js";
-import { codexHookWrapperPath, codexHooksPath, codexHookStatePath, codexShimDir } from "./paths.js";
+import { codexHookWrapperPath, codexHooksPath, codexHookStatePath } from "./paths.js";
 
 const EVENTS = ["UserPromptSubmit", "PreToolUse"] as const;
 
@@ -93,11 +93,10 @@ function listCodexHooks(home: string): CodexHookInfo[] {
     "",
   ].join("\n");
   const quoted = input.replace(/'/g, "'\\''");
-  const pathWithoutShim = (process.env.PATH ?? "").split(":").filter((entry) => entry !== codexShimDir(home)).join(":");
   const result = spawnSync("sh", ["-c", `(printf '%s' '${quoted}'; sleep 1) | codex app-server --listen stdio://`], {
     encoding: "utf8",
     timeout: 5_000,
-    env: { ...process.env, PATH: pathWithoutShim, HOME: home, CODEX_HOME: join(home, ".codex") },
+    env: { ...process.env, HOME: home, CODEX_HOME: join(home, ".codex") },
   });
   if (result.status !== 0 || !result.stdout) return [];
   for (const line of result.stdout.split("\n")) {
@@ -236,7 +235,6 @@ exec "$NODE" ${JSON.stringify(cli)} codex hook
     trust,
     "Note: updating config.toml may rewrite its comments.",
     "",
-    "The PATH shim remains an optional startup belt for older Codex versions.",
   ].join("\n");
 }
 
