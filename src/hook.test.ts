@@ -261,10 +261,10 @@ test("§5 an active override survives unknown usage", async () => {
   }
 });
 
-test("§5 null percent field does not block", async () => {
+test("§5 null percent field on an enforced window fails closed", async () => {
   const config = structuredClone(DEFAULT_CONFIG);
   config.cursor.windows.cursorModels.blockAtPercent = 90;
-  const response = await handleHook(
+  const closed = await handleHook(
     { hook_event_name: "preToolUse", conversation_id: "sess-null-pct" },
     config,
     {
@@ -272,7 +272,19 @@ test("§5 null percent field does not block", async () => {
         fakeResult({ autoPercentUsed: null, apiPercentUsed: 1 }),
     },
   );
-  assert.equal(response.permission, "allow");
+  assert.equal(closed.permission, "deny");
+  assert.match(String(closed.user_message), /Usage unavailable for enforced window/);
+
+  config.enforcement.failClosed = false;
+  const open = await handleHook(
+    { hook_event_name: "preToolUse", conversation_id: "sess-null-pct-open" },
+    config,
+    {
+      getPeriodUsage: async () =>
+        fakeResult({ autoPercentUsed: null, apiPercentUsed: 1 }),
+    },
+  );
+  assert.equal(open.permission, "allow");
 });
 
 test("event-count backstop blocks when over threshold", async () => {

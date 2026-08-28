@@ -236,7 +236,7 @@ test("missing provider entry or windows count as unknown usage", async () => {
   }
 });
 
-test("claude keeps the weekly gate when the five_hour window is omitted", async () => {
+test("claude fails closed when a numeric five_hour window is omitted", async () => {
   const decision = await runGuard("claude", config({}), {
     fetchUsage: () =>
       snapshot([
@@ -246,11 +246,15 @@ test("claude keeps the weekly gate when the five_hour window is omitted", async 
         },
       ]),
   });
-  assert.equal(decision.allow, true);
+  assert.equal(decision.allow, false);
+  const reason = decision.evaluation.reasons[0];
+  assert.equal(reason?.kind, "usageUnknown");
+  if (reason?.kind !== "usageUnknown") throw new Error("expected usageUnknown reason");
+  assert.match(reason.detail, /five_hour/);
 });
 
-test("claude still enforces weekly when five_hour is omitted", async () => {
-  const decision = await runGuard("claude", config({}), {
+test("claude still enforces weekly when five_hour is monitor-only and omitted", async () => {
+  const decision = await runGuard("claude", config({ claudeFiveHourBlockAt: null }), {
     fetchUsage: () =>
       snapshot([
         {
@@ -298,6 +302,23 @@ test("claude fails closed when the required weekly window is omitted", async () 
   assert.equal(reason?.kind, "usageUnknown");
   if (reason?.kind !== "usageUnknown") throw new Error("expected usageUnknown reason");
   assert.match(reason.detail, /weekly/);
+});
+
+test("codex fails closed when a numeric session window is omitted", async () => {
+  const decision = await runGuard("codex", config({ codexSessionBlockAt: 80 }), {
+    fetchUsage: () =>
+      snapshot([
+        {
+          providerId: "codex",
+          windows: [{ id: "weekly", label: "Weekly", usedPct: 13 }],
+        },
+      ]),
+  });
+  assert.equal(decision.allow, false);
+  const reason = decision.evaluation.reasons[0];
+  assert.equal(reason?.kind, "usageUnknown");
+  if (reason?.kind !== "usageUnknown") throw new Error("expected usageUnknown reason");
+  assert.match(reason.detail, /session/);
 });
 
 test("override and exceptions bypass every gate", async () => {

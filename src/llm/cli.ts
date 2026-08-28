@@ -370,8 +370,13 @@ async function statusCommand(home = homedir()): Promise<string> {
 
     // Escape hatches for this store (Claude Code and Codex share it).
     // Cursor Agent's override/exceptions render in its own block below.
+    // Expired overrides must display as none — same rule as Cursor status.
     const overrideRaw = getState(db, "override_until");
-    lines.push(`  Override: ${overrideRaw ? `until ${overrideRaw}` : "none"}`);
+    const overrideUntil = overrideRaw ? new Date(overrideRaw) : null;
+    const overrideActive = Boolean(overrideUntil && overrideUntil.getTime() > now.getTime());
+    lines.push(
+      `  Override: ${overrideActive ? `until ${overrideUntil?.toLocaleString()}` : "none"}`,
+    );
     lines.push(
       `  Exceptions: ${config.excludeSessionIds.length > 0 ? config.excludeSessionIds.join(", ") : "none"}`,
     );

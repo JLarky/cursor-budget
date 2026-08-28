@@ -92,7 +92,7 @@ export async function runGuard(
   const measurements =
     provider && !usageUnknownReason ? buildMeasurements(agent, config, provider) : [];
   if (!usageUnknownReason) {
-    usageUnknownReason = missingGates(agent, measurements);
+    usageUnknownReason = missingGates(agent, config, measurements);
   }
 
   const evaluation = evaluateBudget({
@@ -187,14 +187,27 @@ export function buildMeasurements(
 }
 
 /**
- * Only the primary weekly gate must be present for usage to be "known".
- * Secondary windows (Claude five_hour, Codex session) are optional — omitted
- * or monitor-only (null threshold) and never fail-closed as missing gates.
+ * Numerically configured windows must be present in the vendor report;
+ * `null` thresholds are monitor-only and optional. An omitted numeric gate
+ * is unknown usage so failClosed can block instead of silently allowing.
  */
-function missingGates(agent: GuardAgent, measurements: WindowMeasurement[]): string | null {
+function missingGates(
+  agent: GuardAgent,
+  config: Config,
+  measurements: WindowMeasurement[],
+): string | null {
   const present = new Set(measurements.map((m) => m.windowId));
-  if (present.has("weekly")) return null;
-  return `Usage API did not report the weekly window(s) for ${agent}`;
+  const needed: WindowMeasurement["windowId"][] = [];
+  if (agent === "claude") {
+    if (config.claude.windows.weekly.blockAtPercent !== null) needed.push("weekly");
+    if (config.claude.windows.five_hour.blockAtPercent !== null) needed.push("five_hour");
+  } else {
+    if (config.codex.windows.weekly.blockAtPercent !== null) needed.push("weekly");
+    if (config.codex.windows.session.blockAtPercent !== null) needed.push("session");
+  }
+  const missing = needed.filter((id) => !present.has(id));
+  if (missing.length === 0) return null;
+  return `Usage API did not report the ${missing.join(", ")} window(s) for ${agent}`;
 }
 
 function pctDisplay(usedPct: number | null): string {

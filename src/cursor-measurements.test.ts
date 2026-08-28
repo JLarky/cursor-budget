@@ -29,6 +29,7 @@ test("configured Cursor windows stay visible when vendor meter is null", () => {
   const total = measurements.find((m) => m.windowId === "total");
   assert.equal(cursorModels?.usedDisplay, "unavailable");
   assert.equal(total?.usedDisplay, "unavailable");
-  assert.match(formatWindowLine(cursorModels!), /unavailable/);
-  assert.match(formatWindowLine(total!), /unavailable/);
+  assert.equal(formatWindowLine(cursorModels!), "Cursor Models: unavailable (usage unknown)");
+  assert.equal(formatWindowLine(total!), "Total: unavailable (monitor-only)");
+  assert.doesNotMatch(formatWindowLine(cursorModels!), /block at/);
 });

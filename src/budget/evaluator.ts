@@ -71,9 +71,16 @@ export function evaluateBudget(input: {
   }
 
   const reasons: BudgetBlockReason[] = [];
+  const unavailableEnforced: string[] = [];
   for (const m of input.measurements) {
     if (m.blockAtPercent === null) continue;
-    if (Number.isFinite(m.usedPct) && m.usedPct >= m.blockAtPercent) {
+    // Numeric threshold with no usable meter: cannot evaluate — failClosed
+    // treats this as unknown usage rather than an unarmed pass.
+    if (!Number.isFinite(m.usedPct)) {
+      unavailableEnforced.push(m.label);
+      continue;
+    }
+    if (m.usedPct >= m.blockAtPercent) {
       reasons.push({
         kind: "window",
         windowId: m.windowId,
@@ -91,8 +98,15 @@ export function evaluateBudget(input: {
     reasons.push({ kind: "eventRate", used: input.eventRate.used, limit: input.eventRate.limit });
   }
 
-  if (reasons.length === 0 && input.usageUnknownReason && (input.failClosed ?? true)) {
-    reasons.push({ kind: "usageUnknown", detail: input.usageUnknownReason });
+  if (reasons.length === 0 && (input.failClosed ?? true)) {
+    const detail =
+      input.usageUnknownReason ??
+      (unavailableEnforced.length > 0
+        ? `Usage unavailable for enforced window(s): ${unavailableEnforced.join(", ")}`
+        : null);
+    if (detail) {
+      reasons.push({ kind: "usageUnknown", detail });
+    }
   }
 
   return { allow: reasons.length === 0, reasons, overrideActive: false, excluded: false };
@@ -121,12 +135,20 @@ export function formatUsd(value: number): string {
   return `$${n.toFixed(2)}`;
 }
 
-/** One status line for a window: usage, enforced-or-monitor-only, and reset time. */
+/**
+ * One status line for a window: usage, enforced-or-monitor-only, and reset time.
+ * Unavailable meters never advertise an armed `block at` threshold — that would
+ * look like an active gate when the evaluator cannot actually fire it.
+ */
 export function formatWindowLine(m: WindowMeasurement): string {
-  const used = Number.isFinite(m.usedPct) ? formatPercent(m.usedPct) : m.usedDisplay;
+  const reset = m.resetsAt ? ` — resets ${m.resetsAt}` : "";
+  if (!Number.isFinite(m.usedPct)) {
+    const status = m.blockAtPercent === null ? "monitor-only" : "usage unknown";
+    return `${m.label}: unavailable (${status})${reset}`;
+  }
+  const used = formatPercent(m.usedPct);
   const status =
     m.blockAtPercent === null ? "monitor-only" : `block at ${formatPercent(m.blockAtPercent)}`;
-  const reset = m.resetsAt ? ` — resets ${m.resetsAt}` : "";
   return `${m.label}: ${used} (${status})${reset}`;
 }
 

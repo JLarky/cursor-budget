@@ -185,6 +185,85 @@ test("formatWindowLine distinguishes enforced from monitor-only", () => {
   );
 });
 
+test("formatWindowLine never advertises block-at for unavailable meters", () => {
+  assert.equal(
+    formatWindowLine(
+      measurement({ usedPct: Number.NaN, usedDisplay: "unavailable", blockAtPercent: 90 }),
+    ),
+    "Weekly: unavailable (usage unknown)",
+  );
+  assert.equal(
+    formatWindowLine(
+      measurement({ usedPct: Number.NaN, usedDisplay: "unavailable", blockAtPercent: null }),
+    ),
+    "Weekly: unavailable (monitor-only)",
+  );
+});
+
+test("unavailable enforced meters fail closed instead of advertising a pass", () => {
+  const blocked = evaluateBudget({
+    measurements: [
+      measurement({
+        windowId: "cursorModels",
+        label: "Cursor Models",
+        usedPct: Number.NaN,
+        usedDisplay: "unavailable",
+        blockAtPercent: 90,
+      }),
+      measurement({
+        windowId: "otherModels",
+        label: "Other Models",
+        usedPct: 1,
+        usedDisplay: "1%",
+        blockAtPercent: 90,
+      }),
+    ],
+    overrideUntil: null,
+    now: NOW,
+    failClosed: true,
+  });
+  assert.equal(blocked.allow, false);
+  assert.equal(blocked.reasons[0]?.kind, "usageUnknown");
+  if (blocked.reasons[0]?.kind === "usageUnknown") {
+    assert.match(blocked.reasons[0].detail, /Cursor Models/);
+  }
+
+  const open = evaluateBudget({
+    measurements: [
+      measurement({
+        windowId: "cursorModels",
+        label: "Cursor Models",
+        usedPct: Number.NaN,
+        usedDisplay: "unavailable",
+        blockAtPercent: 90,
+      }),
+    ],
+    overrideUntil: null,
+    now: NOW,
+    failClosed: false,
+  });
+  assert.equal(open.allow, true);
+});
+
+test("monitor-only unavailable meters do not fail closed", () => {
+  const result = evaluateBudget({
+    measurements: [
+      measurement({ usedPct: 10, blockAtPercent: 80 }),
+      measurement({
+        windowId: "total",
+        label: "Total",
+        usedPct: Number.NaN,
+        usedDisplay: "unavailable",
+        blockAtPercent: null,
+      }),
+    ],
+    overrideUntil: null,
+    now: NOW,
+    failClosed: true,
+  });
+  assert.equal(result.allow, true);
+});
+
 test("formatUsd handles non-finite and sub-cent values", () => {
   assert.equal(formatUsd(Number.NaN), "$?—");
   assert.equal(formatUsd(0.006), "$0.006");
