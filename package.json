@@ -21,7 +21,8 @@
     "build": "tsc",
     "lint": "oxlint && oxlint -c tools/oxlint/anti-slop/oxlint.config.ts tools/oxlint/anti-slop",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tools/oxlint/anti-slop/tsconfig.json",
-    "test": "tsc && node --test 'dist/**/*.test.js'"
+    "test": "tsc && node --test 'dist/**/*.test.js' && npm run test:anti-slop",
+    "test:anti-slop": "node tools/oxlint/anti-slop/run-tests.mjs"
   },
   "engines": {
     "node": ">=22.5.0"
