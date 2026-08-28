@@ -20,6 +20,7 @@ test("cursor install wrapper invokes llm cli cursor hook", () => {
     assert.match(result, /Installed llm-budget Cursor Agent hooks/);
     assert.equal(cursorHooksInstalled(home), true);
 
+    // SAFETY: installCommand writes hooks.json as an object whose hooks values are arrays.
     const hooks = JSON.parse(readFileSync(join(home, ".cursor", "hooks.json"), "utf8")) as {
       hooks: Record<string, Array<{ failClosed?: boolean }>>;
     };
