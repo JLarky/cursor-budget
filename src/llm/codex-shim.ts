@@ -115,13 +115,3 @@ export function uninstallCodexShim(home = homedir()): string {
     "Remove the PATH export from your shell profile if you added one.",
   ].join("\n");
 }
-
-export function codexShimInstalled(home = homedir()): boolean {
-  const shimPath = codexShimPath(home);
-  if (!existsSync(shimPath)) return false;
-  try {
-    return readFileSync(shimPath, "utf8").includes("codex-guard");
-  } catch {
-    return false;
-  }
-}
