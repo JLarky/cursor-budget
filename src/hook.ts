@@ -13,7 +13,7 @@ import {
   formatAge,
   formatNullablePercent,
   formatPercent,
-  formatUsd,
+  formatPeriodSpend,
   type BudgetEvaluation,
 } from "./budget/evaluator.js";
 import { rollingHour } from "./budget/windows.js";
@@ -356,13 +356,8 @@ function formatCursorBlockMessage(
     lines.push(`  ${formatNullablePercent(plan.autoPercentUsed)}`);
     lines.push("Other Models:");
     lines.push(`  ${formatNullablePercent(plan.apiPercentUsed)}`);
-    if (plan.limitUsd != null) {
-      lines.push("Period spend:");
-      lines.push(`  ${formatUsd(plan.totalSpendUsd)} / ${formatUsd(plan.limitUsd)}`);
-    } else {
-      lines.push("Period spend:");
-      lines.push(`  ${formatUsd(plan.totalSpendUsd)}`);
-    }
+    lines.push("Period spend:");
+    lines.push(`  ${formatPeriodSpend(plan)}`);
     const reset = periodUsage.usage.billingCycleEnd;
     if (reset) {
       lines.push(`Cycle resets: ${reset.toLocaleString()}`);
