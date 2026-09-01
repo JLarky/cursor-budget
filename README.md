@@ -153,10 +153,9 @@ all fall back to a hard-coded deny instead of silently letting the tool call
 through.
 
 xAI's weekly credit percent is not published on every plan. A plan that
-reports no percent is **unmetered**, not 0% — `unmetered` and `unavailable`
-(auth expired, request failed) are shown as distinct status lines because
-their fixes are different. Because this is a guard, `grok.windows.weekly`
-ships enforced at `80`; an unmetered or unavailable reading fails closed
+reports no percent prints `no weekly percent`, not `0%`. That is distinct
+from `unavailable` (auth expired, request failed). Because this is a guard,
+`grok.windows.weekly` ships enforced at `80`; either reading fails closed
 like any other unknown usage until you set it to `null` or use an override.
 
 ```
