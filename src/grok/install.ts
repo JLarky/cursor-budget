@@ -92,7 +92,11 @@ export function installGrokHook(home = homedir()): string {
 
   const hooks = {
     hooks: {
-      PreToolUse: [{ command: wrapper, timeout: GROK_HOOK_TIMEOUT_S }],
+      PreToolUse: [
+        {
+          hooks: [{ type: "command", command: wrapper, timeout: GROK_HOOK_TIMEOUT_S }],
+        },
+      ],
     },
   };
   mkdirSync(dirname(hooksFile), { recursive: true });
@@ -118,7 +122,13 @@ export function grokHookInstalled(home = homedir()): boolean {
     const parsed = asJsonObject(parseJsonText(readFileSync(grokHooksFilePath(home), "utf8")));
     const hooks = asJsonObject(parsed?.hooks);
     const entries = asJsonArray(hooks?.PreToolUse) ?? [];
-    return entries.some((entry) => asJsonObject(entry)?.command === wrapper);
+    return entries.some((entry) => {
+      const group = asJsonObject(entry);
+      if (group === null) return false;
+      if (group.command === wrapper) return true;
+      const handlers = asJsonArray(group.hooks) ?? [];
+      return handlers.some((handler) => asJsonObject(handler)?.command === wrapper);
+    });
   } catch {
     return false;
   }
