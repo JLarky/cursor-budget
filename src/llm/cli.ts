@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
-import { formatUsd, formatWindowLine } from "../budget/evaluator.js";
+import { formatPeriodSpend, formatWindowLine } from "../budget/evaluator.js";
 import { parseDuration } from "../budget/windows.js";
 import {
   ClaudeHookInputError,
@@ -403,13 +403,7 @@ async function statusCommand(home = homedir()): Promise<string> {
       for (const m of buildCursorMeasurements(config, plan)) {
         lines.push(`  ${formatWindowLine(m)}`);
       }
-      lines.push(
-        `  Period spend: ${
-          plan.limitUsd != null
-            ? `${formatUsd(plan.totalSpendUsd)} / ${formatUsd(plan.limitUsd)}`
-            : formatUsd(plan.totalSpendUsd)
-        }`,
-      );
+      lines.push(`  Period spend: ${formatPeriodSpend(plan)}`);
     } catch (error) {
       const detail = error instanceof Error ? error.message.split(":")[0] : String(error);
       lines.push(`  Dashboard usage: unavailable (${detail}) — sign in with cursor-agent`);

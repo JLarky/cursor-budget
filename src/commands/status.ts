@@ -1,5 +1,5 @@
 import { getCursorPeriodUsage, getProvider, readAuthExpiry } from "../accounting/index.js";
-import { formatAge, formatUsd, formatWindowLine } from "../budget/evaluator.js";
+import { formatAge, formatPeriodSpend, formatWindowLine } from "../budget/evaluator.js";
 import { rollingHour } from "../budget/windows.js";
 import { loadConfigForRead } from "../config.js";
 import { buildCursorMeasurements } from "../cursor-measurements.js";
@@ -44,9 +44,7 @@ export async function statusCommand(home?: string): Promise<string> {
     usageLines = [
       ...measurements.map((m) => formatWindowLine(m)),
       "Period spend:",
-      plan.limitUsd != null
-        ? `  ${formatUsd(plan.totalSpendUsd)} / ${formatUsd(plan.limitUsd)}`
-        : `  ${formatUsd(plan.totalSpendUsd)}`,
+      `  ${formatPeriodSpend(plan)}`,
       `Cycle resets: ${reset ? reset.toLocaleString() : "unknown"}`,
       `Snapshot: ${result.source}${result.stale ? " (stale)" : ""}, age ${formatAge(result.ageMs)}`,
     ];

@@ -136,6 +136,30 @@ export function formatUsd(value: number): string {
 }
 
 /**
+ * Format Cursor period spend for status / deny messages.
+ *
+ * Cursor's Spending UI leads with percent meters ("17% used"), not
+ * `$total / $limit`. When bonus spend is present, `$634 / $400` reads like a
+ * blown dollar budget even though on-demand may be disabled and the included
+ * pool is just exhausted into complimentary bonus. Spell out included vs bonus
+ * in that case; keep the short fraction when there is no bonus.
+ */
+export function formatPeriodSpend(plan: {
+  totalSpendUsd: number;
+  includedSpendUsd: number;
+  bonusSpendUsd: number;
+  limitUsd: number | null;
+}): string {
+  const total = formatUsd(plan.totalSpendUsd);
+  if (plan.limitUsd == null) return total;
+  const limit = formatUsd(plan.limitUsd);
+  if (plan.bonusSpendUsd > 0) {
+    return `${total} (included ${formatUsd(plan.includedSpendUsd)} + bonus ${formatUsd(plan.bonusSpendUsd)}; included limit ${limit})`;
+  }
+  return `${total} / ${limit}`;
+}
+
+/**
  * One status line for a window: usage, enforced-or-monitor-only, and reset time.
  * Unavailable meters never advertise an armed `block at` threshold — that would
  * look like an active gate when the evaluator cannot actually fire it.

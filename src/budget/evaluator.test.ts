@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   evaluateBudget,
   formatAge,
+  formatPeriodSpend,
   formatUsd,
   formatWindowLine,
   type WindowMeasurement,
@@ -268,6 +269,36 @@ test("formatUsd handles non-finite and sub-cent values", () => {
   assert.equal(formatUsd(Number.NaN), "$?—");
   assert.equal(formatUsd(0.006), "$0.006");
   assert.equal(formatUsd(1.5), "$1.50");
+});
+
+test("formatPeriodSpend keeps short fraction without bonus and expands with bonus", () => {
+  assert.equal(
+    formatPeriodSpend({
+      totalSpendUsd: 120,
+      includedSpendUsd: 120,
+      bonusSpendUsd: 0,
+      limitUsd: 400,
+    }),
+    "$120.00 / $400.00",
+  );
+  assert.equal(
+    formatPeriodSpend({
+      totalSpendUsd: 634.69,
+      includedSpendUsd: 400,
+      bonusSpendUsd: 234.69,
+      limitUsd: 400,
+    }),
+    "$634.69 (included $400.00 + bonus $234.69; included limit $400.00)",
+  );
+  assert.equal(
+    formatPeriodSpend({
+      totalSpendUsd: 12,
+      includedSpendUsd: 12,
+      bonusSpendUsd: 0,
+      limitUsd: null,
+    }),
+    "$12.00",
+  );
 });
 
 test("formatAge scales units", () => {
