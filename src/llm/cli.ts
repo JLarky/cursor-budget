@@ -45,7 +45,7 @@ import { configCommand as cursorConfigCommand } from "../commands/config.js";
 import { spendingCommand as cursorSpendingCommand } from "../commands/spending.js";
 import { handleHook, readStdinJson } from "../hook.js";
 import { grokScope, grokStatusSection } from "../grok/scope.js";
-import { installGrokHook } from "../grok/install.js";
+import { grokDenyJson, installGrokHook } from "../grok/install.js";
 
 async function main(): Promise<void> {
   // Piping into `head` and friends closes stdout early; exit quietly on EPIPE
@@ -532,6 +532,13 @@ main().catch((error) => {
   if (argv[0] === "codex" && argv[1] === "hook") {
     const detail = error instanceof CodexHookInputError ? message : `unexpected hook failure: ${message}`;
     process.stderr.write(`llm-budget could not verify your budget:\n  ${detail}\n\nBlocked because enforcement.failClosed is on (the default).\n\nRecover with:\n  llm-budget override 30m\n  llm-budget status\n`);
+    process.exit(2);
+    return;
+  }
+  if (argv[0] === "grok" && argv[1] === "hook") {
+    process.stdout.write(
+      `${grokDenyJson(`llm-budget could not verify the Grok budget: ${message}. Recover with: llm-budget grok override 30m | llm-budget grok status`)}\n`,
+    );
     process.exit(2);
     return;
   }

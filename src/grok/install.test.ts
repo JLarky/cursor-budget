@@ -67,4 +67,6 @@ test("the wrapper contains the deny JSON for a missing Node", () => {
   assert.ok(wrapper.includes(expected), "wrapper must embed the deny JSON literal");
   assert.match(wrapper, /grok hook/);
   assert.doesNotMatch(wrapper, /\bexec\b/);
+  assert.match(wrapper, /\[ ! -s "\$out" \]/);
+  assert.match(wrapper, /timeout 8 /);
 });

@@ -12,6 +12,8 @@ import { asJsonArray, asJsonObject, parseJsonText } from "../json-value.js";
  * OIDC refresh plus an HTTPS call can approach Grok's own default.
  */
 export const GROK_HOOK_TIMEOUT_S = 10;
+/** Seconds the wrapper gives Node, shorter than the declared hook timeout so a hung process still leaves a deny. */
+export const GROK_HOOK_INNER_TIMEOUT_S = GROK_HOOK_TIMEOUT_S - 2;
 
 /**
  * The only place in the codebase that spells the deny protocol. Grok honors a
@@ -27,11 +29,9 @@ const WRAPPER_MISSING_NODE_REASON =
   "llm-budget: Grok budget could not be checked. Run llm-budget grok status";
 
 /**
- * Deny-envelope wrapper: runs Node and inspects stdout rather than `exec`ing
- * it, because a killed hook (Grok's timeout, a crash) must still leave a deny
- * behind. Missing Node, a non-zero exit with no deny JSON, and a clean exit
- * with a deny JSON in stdout are all denies; only a clean exit without a deny
- * JSON allows.
+ * Deny-envelope wrapper: supervise Node rather than `exec` it, so a crash or
+ * timeout still leaves deny JSON. Allow is only exit 0 with empty stdout.
+ * Any other bytes, including allow JSON, become the wrapper deny.
  */
 function wrapperScript(cli: string): string {
   return `#!/bin/bash
@@ -51,14 +51,17 @@ if [ -z "$NODE" ]; then
 fi
 out="$(mktemp)"
 code=0
-"$NODE" ${JSON.stringify(cli)} grok hook >"$out" 2>/dev/null || code=$?
+if command -v timeout >/dev/null 2>&1; then
+  timeout ${GROK_HOOK_INNER_TIMEOUT_S} "$NODE" ${JSON.stringify(cli)} grok hook >"$out" 2>/dev/null || code=$?
+else
+  "$NODE" ${JSON.stringify(cli)} grok hook >"$out" 2>/dev/null || code=$?
+fi
 if grep -q '"decision":"deny"' "$out" 2>/dev/null; then
   cat "$out"
   rm -f "$out"
   exit 2
 fi
-if [ "$code" -eq 0 ]; then
-  cat "$out"
+if [ "$code" -eq 0 ] && [ ! -s "$out" ]; then
   rm -f "$out"
   exit 0
 fi
