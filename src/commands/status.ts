@@ -42,7 +42,7 @@ export async function statusCommand(home?: string): Promise<string> {
     const reset = result.usage.billingCycleEnd;
     const measurements = buildCursorMeasurements(config, plan);
     usageLines = [
-      ...measurements.map((m) => formatWindowLine(m)),
+      ...measurements.map((m) => formatWindowLine(m, now)),
       "Period spend:",
       plan.limitUsd != null
         ? `  ${formatUsd(plan.totalSpendUsd)} / ${formatUsd(plan.limitUsd)}`

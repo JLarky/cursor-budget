@@ -372,7 +372,7 @@ async function statusCommand(home = homedir()): Promise<string> {
         lines.push("  No usage windows reported yet");
       }
       for (const m of buildMeasurements(agent, config, provider)) {
-        lines.push(`  ${formatWindowLine(m)}`);
+        lines.push(`  ${formatWindowLine(m, now)}`);
       }
     }
 
@@ -401,7 +401,7 @@ async function statusCommand(home = homedir()): Promise<string> {
       const result = await getCursorPeriodUsage({ home, cacheTtlMs: config.cursor.cacheTtlMs, now });
       const plan = result.usage.planUsage;
       for (const m of buildCursorMeasurements(config, plan)) {
-        lines.push(`  ${formatWindowLine(m)}`);
+        lines.push(`  ${formatWindowLine(m, now)}`);
       }
       lines.push(
         `  Period spend: ${

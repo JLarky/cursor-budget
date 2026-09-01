@@ -3,8 +3,10 @@ import test from "node:test";
 import {
   evaluateBudget,
   formatAge,
+  formatResetCountdown,
   formatUsd,
   formatWindowLine,
+  parseResetRemaining,
   type WindowMeasurement,
 } from "./evaluator.js";
 
@@ -180,8 +182,11 @@ test("formatWindowLine distinguishes enforced from monitor-only", () => {
     "Weekly: 2% (monitor-only)",
   );
   assert.equal(
-    formatWindowLine(measurement({ usedPct: 2, blockAtPercent: null, resetsAt: "2026-08-31T00:00:00.000Z" })),
-    "Weekly: 2% (monitor-only) — resets 2026-08-31T00:00:00.000Z",
+    formatWindowLine(
+      measurement({ usedPct: 2, blockAtPercent: null, resetsAt: "2026-08-31T00:00:00.000Z" }),
+      NOW,
+    ),
+    "Weekly: 2% (monitor-only) — resets 2026-08-31T00:00:00.000Z (in 11 days and 8 hours)",
   );
 });
 
@@ -275,4 +280,52 @@ test("formatAge scales units", () => {
   assert.equal(formatAge(2_000), "2s");
   assert.equal(formatAge(120_000), "2m");
   assert.equal(formatAge(7_200_000), "2.0h");
+});
+
+test("parseResetRemaining and formatResetCountdown cover remaining buckets", () => {
+  const daysHoursAt = "2026-08-31T00:00:00.000Z";
+  assert.deepEqual(parseResetRemaining(daysHoursAt, NOW), {
+    kind: "days_hours",
+    days: 11,
+    hours: 8,
+  });
+  assert.equal(formatResetCountdown(daysHoursAt, NOW), " (in 11 days and 8 hours)");
+
+  const exactlyOneDay = new Date(NOW.getTime() + 24 * 3_600_000).toISOString();
+  assert.deepEqual(parseResetRemaining(exactlyOneDay, NOW), {
+    kind: "days_hours",
+    days: 1,
+    hours: 0,
+  });
+  assert.equal(formatResetCountdown(exactlyOneDay, NOW), " (in 1 day)");
+
+  const underADay = new Date(NOW.getTime() + 23 * 3_600_000 + 59 * 60_000).toISOString();
+  assert.deepEqual(parseResetRemaining(underADay, NOW), {
+    kind: "hours_minutes",
+    hours: 23,
+    minutes: 59,
+  });
+  assert.equal(formatResetCountdown(underADay, NOW), " (in 23 hours and 59 minutes)");
+
+  const oneHour = new Date(NOW.getTime() + 3_600_000).toISOString();
+  assert.deepEqual(parseResetRemaining(oneHour, NOW), {
+    kind: "hours_minutes",
+    hours: 1,
+    minutes: 0,
+  });
+  assert.equal(formatResetCountdown(oneHour, NOW), " (in 1 hour)");
+
+  const fortyFiveMinutes = new Date(NOW.getTime() + 45 * 60_000).toISOString();
+  assert.equal(formatResetCountdown(fortyFiveMinutes, NOW), " (in 45 minutes)");
+
+  const thirtySeconds = new Date(NOW.getTime() + 30_000).toISOString();
+  assert.equal(parseResetRemaining(thirtySeconds, NOW).kind, "under_minute");
+  assert.equal(formatResetCountdown(thirtySeconds, NOW), " (in less than a minute)");
+
+  const past = new Date(NOW.getTime() - 1).toISOString();
+  assert.equal(parseResetRemaining(past, NOW).kind, "past");
+  assert.equal(formatResetCountdown(past, NOW), " (already reset)");
+
+  assert.equal(parseResetRemaining("not-a-date", NOW).kind, "invalid");
+  assert.equal(formatResetCountdown("not-a-date", NOW), "");
 });

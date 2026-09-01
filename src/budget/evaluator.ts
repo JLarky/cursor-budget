@@ -135,21 +135,91 @@ export function formatUsd(value: number): string {
   return `$${n.toFixed(2)}`;
 }
 
-/**
- * One status line for a window: usage, enforced-or-monitor-only, and reset time.
- * Unavailable meters never advertise an armed `block at` threshold — that would
- * look like an active gate when the evaluator cannot actually fire it.
- */
-export function formatWindowLine(m: WindowMeasurement): string {
-  const reset = m.resetsAt ? ` — resets ${m.resetsAt}` : "";
+export type ResetRemaining =
+  | { kind: "invalid" }
+  | { kind: "past" }
+  | { kind: "under_minute" }
+  | { kind: "hours_minutes"; hours: number; minutes: number }
+  | { kind: "days_hours"; days: number; hours: number };
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 3_600_000;
+const DAY_MS = 86_400_000;
+
+export function parseResetRemaining(resetsAt: string, now: Date): ResetRemaining {
+  const resetMs = Date.parse(resetsAt);
+  if (Number.isNaN(resetMs)) return { kind: "invalid" };
+  const remainingMs = resetMs - now.getTime();
+  if (remainingMs <= 0) return { kind: "past" };
+  if (remainingMs < MINUTE_MS) return { kind: "under_minute" };
+  if (remainingMs < DAY_MS) {
+    return {
+      kind: "hours_minutes",
+      hours: Math.floor(remainingMs / HOUR_MS),
+      minutes: Math.floor((remainingMs % HOUR_MS) / MINUTE_MS),
+    };
+  }
+  return {
+    kind: "days_hours",
+    days: Math.floor(remainingMs / DAY_MS),
+    hours: Math.floor((remainingMs % DAY_MS) / HOUR_MS),
+  };
+}
+
+function counted(n: number, singular: string): string {
+  return `${n} ${n === 1 ? singular : `${singular}s`}`;
+}
+
+function inPhrase(parts: string[]): string {
+  if (parts.length === 0) return "";
+  if (parts.length === 1) return ` (in ${parts[0]})`;
+  return ` (in ${parts[0]} and ${parts[1]})`;
+}
+
+export function formatResetRemaining(remaining: ResetRemaining): string {
+  switch (remaining.kind) {
+    case "invalid":
+      return "";
+    case "past":
+      return " (already reset)";
+    case "under_minute":
+      return " (in less than a minute)";
+    case "hours_minutes": {
+      const parts: string[] = [];
+      if (remaining.hours > 0) parts.push(counted(remaining.hours, "hour"));
+      if (remaining.minutes > 0) parts.push(counted(remaining.minutes, "minute"));
+      return inPhrase(parts);
+    }
+    case "days_hours": {
+      const parts: string[] = [];
+      if (remaining.days > 0) parts.push(counted(remaining.days, "day"));
+      if (remaining.hours > 0) parts.push(counted(remaining.hours, "hour"));
+      return inPhrase(parts);
+    }
+    default: {
+      const _exhaustive: never = remaining;
+      return _exhaustive;
+    }
+  }
+}
+
+export function formatResetCountdown(resetsAt: string, now: Date): string {
+  return formatResetRemaining(parseResetRemaining(resetsAt, now));
+}
+
+function windowLineStatus(m: WindowMeasurement): string {
+  if (m.blockAtPercent === null) return "monitor-only";
+  if (!Number.isFinite(m.usedPct)) return "usage unknown";
+  return `block at ${formatPercent(m.blockAtPercent)}`;
+}
+
+export function formatWindowLine(m: WindowMeasurement, now: Date = new Date()): string {
+  const reset = m.resetsAt ? ` — resets ${m.resetsAt}${formatResetCountdown(m.resetsAt, now)}` : "";
+  const status = windowLineStatus(m);
   if (!Number.isFinite(m.usedPct)) {
-    const status = m.blockAtPercent === null ? "monitor-only" : "usage unknown";
     return `${m.label}: unavailable (${status})${reset}`;
   }
-  const used = formatPercent(m.usedPct);
-  const status =
-    m.blockAtPercent === null ? "monitor-only" : `block at ${formatPercent(m.blockAtPercent)}`;
-  return `${m.label}: ${used} (${status})${reset}`;
+  return `${m.label}: ${formatPercent(m.usedPct)} (${status})${reset}`;
 }
 
 export function formatAge(ageMs: number): string {

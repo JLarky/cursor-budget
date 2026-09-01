@@ -35,6 +35,7 @@ test("watchdog kills codex processes on every tripped pass, notifies once", asyn
       excluded: false,
     },
     sessionId: "",
+    now: new Date("2026-09-01T00:00:00.000Z"),
     config: anyConfig(),
   });
 

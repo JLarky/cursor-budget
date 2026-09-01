@@ -1,4 +1,5 @@
 import * as v from "valibot";
+import { formatResetCountdown } from "../budget/evaluator.js";
 import type { GrokConfig } from "../config.js";
 
 /**
@@ -235,7 +236,7 @@ export function renderGrokStatus(state: GateState, hooks: HookInstallState): rea
     lines.push("disabled in config");
     return lines;
   }
-  lines.push(renderWeeklyLine(state.weekly, state.gate));
+  lines.push(renderWeeklyLine(state.weekly, state.gate, state.now));
   const overrideActive =
     state.overrideUntil !== null && state.overrideUntil.getTime() > state.now.getTime();
   lines.push(
@@ -247,8 +248,10 @@ export function renderGrokStatus(state: GateState, hooks: HookInstallState): rea
   return lines;
 }
 
-function renderWeeklyLine(weekly: GrokWeekly, gate: Gate): string {
-  const resetSuffix = weekly.resetsAt ? ` — resets ${weekly.resetsAt}` : "";
+function renderWeeklyLine(weekly: GrokWeekly, gate: Gate, now: Date): string {
+  const resetSuffix = weekly.resetsAt
+    ? ` — resets ${weekly.resetsAt}${formatResetCountdown(weekly.resetsAt, now)}`
+    : "";
   const gateSuffix = gate.kind === "armed" ? `block at ${gate.blockAtPercent}%` : "monitor-only";
   const reading = weekly.percent;
   switch (reading.kind) {
