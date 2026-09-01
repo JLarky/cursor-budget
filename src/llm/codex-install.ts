@@ -19,7 +19,7 @@ import {
   type JsonArray,
   type JsonValue,
 } from "../json-value.js";
-import { ensureLlmConfig } from "./config.js";
+import { ensureConfig } from "../config.js";
 import { codexHookWrapperPath, codexHooksPath, codexHookStatePath } from "./paths.js";
 
 const EVENTS = ["UserPromptSubmit", "PreToolUse"] as const;
@@ -181,7 +181,7 @@ function groupHooks(group: JsonValue): JsonArray {
 }
 
 export function installCodexHooks(home = homedir()): string {
-  ensureLlmConfig(home);
+  ensureConfig(home);
   const wrapper = codexHookWrapperPath(home);
   const path = codexHooksPath(home);
   const cli = join(fileURLToPath(new URL("./cli.js", import.meta.url)));

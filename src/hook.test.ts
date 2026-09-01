@@ -76,7 +76,7 @@ test("invalid config.jsonc denies enforce events instead of failing open", async
     writeFileSync(
       join(home, ".config", "llm-budget", "config.jsonc"),
       `${JSON.stringify({
-        quota: { cursorModelsBlockAtPercent: "ninety" },
+        cursor: { windows: { cursorModels: { blockAtPercent: "ninety" } } },
       })}\n`,
     );
     const response = await handleHook(
@@ -118,7 +118,7 @@ test("invalid config.jsonc still allows non-enforce record events", async () => 
 
 test("§5 network/cache sources gate normally", async () => {
   const config = structuredClone(DEFAULT_CONFIG);
-  config.quota.cursorModelsBlockAtPercent = 90;
+  config.cursor.windows.cursorModels.blockAtPercent = 90;
   for (const source of ["network", "cache"] as const) {
     const response = await handleHook(
       { hook_event_name: "preToolUse", conversation_id: "sess-gate" },
@@ -133,8 +133,8 @@ test("§5 network/cache sources gate normally", async () => {
 
 test("§5 stale-cache within maxStaleMs gates normally", async () => {
   const config = structuredClone(DEFAULT_CONFIG);
-  config.quota.cursorModelsBlockAtPercent = 90;
-  config.quota.maxStaleMs = 3_600_000;
+  config.cursor.windows.cursorModels.blockAtPercent = 90;
+  config.cursor.maxStaleMs = 3_600_000;
   const response = await handleHook(
     { hook_event_name: "preToolUse", conversation_id: "sess-stale-ok" },
     config,
@@ -154,8 +154,8 @@ test("§5 stale-cache within maxStaleMs gates normally", async () => {
 
 test("§5 stale-cache beyond maxStaleMs blocks as unknown usage", async () => {
   const config = structuredClone(DEFAULT_CONFIG);
-  config.quota.cursorModelsBlockAtPercent = 90;
-  config.quota.maxStaleMs = 60_000;
+  config.cursor.windows.cursorModels.blockAtPercent = 90;
+  config.cursor.maxStaleMs = 60_000;
   const deps = {
     getPeriodUsage: async () =>
       fakeResult({
@@ -185,7 +185,7 @@ test("§5 stale-cache beyond maxStaleMs blocks as unknown usage", async () => {
 
 test("§5 CursorUsageUnavailableError blocks by default, allows when failClosed is off", async () => {
   const config = structuredClone(DEFAULT_CONFIG);
-  config.quota.cursorModelsBlockAtPercent = 1;
+  config.cursor.windows.cursorModels.blockAtPercent = 1;
   const deps = {
     getPeriodUsage: async (): Promise<CursorPeriodUsageResult> => {
       throw new CursorUsageUnavailableError("no cache");
@@ -214,7 +214,7 @@ test("§5 CursorUsageUnavailableError blocks by default, allows when failClosed 
 
 test("§5 HTTP 401 blocks by default and names the fix", async () => {
   const config = structuredClone(DEFAULT_CONFIG);
-  config.quota.cursorModelsBlockAtPercent = 1;
+  config.cursor.windows.cursorModels.blockAtPercent = 1;
   const deps = {
     getPeriodUsage: async (): Promise<CursorPeriodUsageResult> => {
       throw new CursorUsageUnavailableError(
@@ -261,10 +261,10 @@ test("§5 an active override survives unknown usage", async () => {
   }
 });
 
-test("§5 null percent field does not block", async () => {
+test("§5 null percent field on an enforced window fails closed", async () => {
   const config = structuredClone(DEFAULT_CONFIG);
-  config.quota.cursorModelsBlockAtPercent = 90;
-  const response = await handleHook(
+  config.cursor.windows.cursorModels.blockAtPercent = 90;
+  const closed = await handleHook(
     { hook_event_name: "preToolUse", conversation_id: "sess-null-pct" },
     config,
     {
@@ -272,14 +272,26 @@ test("§5 null percent field does not block", async () => {
         fakeResult({ autoPercentUsed: null, apiPercentUsed: 1 }),
     },
   );
-  assert.equal(response.permission, "allow");
+  assert.equal(closed.permission, "deny");
+  assert.match(String(closed.user_message), /Usage unavailable for enforced window/);
+
+  config.enforcement.failClosed = false;
+  const open = await handleHook(
+    { hook_event_name: "preToolUse", conversation_id: "sess-null-pct-open" },
+    config,
+    {
+      getPeriodUsage: async () =>
+        fakeResult({ autoPercentUsed: null, apiPercentUsed: 1 }),
+    },
+  );
+  assert.equal(open.permission, "allow");
 });
 
 test("event-count backstop blocks when over threshold", async () => {
   const home = tempHome("llm-budget-events-");
   try {
     const config = structuredClone(DEFAULT_CONFIG);
-    config.rateLimit.maxEventsPerHour = 2;
+    config.cursor.rateLimit.maxEventsPerHour = 2;
     // Seed two events via beforeSubmitPrompt record path on allow, then block on third enforce.
     const deps = {
       home,
@@ -321,15 +333,15 @@ test("override and except bypass both gates", async () => {
   const home = tempHome("llm-budget-bypass-");
   try {
     const config = structuredClone(DEFAULT_CONFIG);
-    config.quota.cursorModelsBlockAtPercent = 1;
-    config.rateLimit.maxEventsPerHour = 0;
+    config.cursor.windows.cursorModels.blockAtPercent = 1;
+    config.cursor.rateLimit.maxEventsPerHour = 0;
     const deps = {
       home,
       getPeriodUsage: async () => fakeResult({ autoPercentUsed: 99 }),
     };
 
     const excepted = structuredClone(config);
-    excepted.excludeConversationIds = ["sess-except"];
+    excepted.cursor.excludeConversationIds = ["sess-except"];
     const exceptResp = await handleHook(
       { hook_event_name: "preToolUse", conversation_id: "sess-except" },
       excepted,
@@ -356,8 +368,8 @@ test("warnings fire once per threshold per billing cycle", async () => {
   const home = tempHome("llm-budget-warn-");
   try {
     const config = structuredClone(DEFAULT_CONFIG);
-    config.quota.cursorModelsBlockAtPercent = 100;
-    config.warnings = [0.5];
+    config.cursor.windows.cursorModels.blockAtPercent = 100;
+    config.cursor.warnings = [0.5];
     const periodUsage = fakeResult({ autoPercentUsed: 60 });
     const deps = {
       home,
@@ -388,7 +400,7 @@ test("warnings fire once per threshold per billing cycle", async () => {
 
 test("resolvePeriodUsage marks too-stale as null", async () => {
   const config = structuredClone(DEFAULT_CONFIG);
-  config.quota.maxStaleMs = 10_000;
+  config.cursor.maxStaleMs = 10_000;
   const { periodUsage } = await resolvePeriodUsage(config, {
     getPeriodUsage: async () =>
       fakeResult({ source: "stale-cache", stale: true, ageMs: 999_999 }),

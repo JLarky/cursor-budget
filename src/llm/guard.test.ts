@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DEFAULT_CONFIG, type LlmConfig } from "./config.js";
+import { DEFAULT_CONFIG, type Config } from "../config.js";
 import { formatGuardDeny, runGuard } from "./guard.js";
 import type { UsageSnapshot } from "./usage/index.js";
 import { tempHome } from "../test-home.js";
@@ -8,14 +8,17 @@ import { tempHome } from "../test-home.js";
 function config(overrides: {
   claudeEnabled?: boolean;
   codexEnabled?: boolean;
-  codexOpenAiBlockAt?: number | null;
+  claudeFiveHourBlockAt?: number | null;
+  codexSessionBlockAt?: number | null;
   failClosed?: boolean;
-}): LlmConfig {
+}): Config {
   const c = structuredClone(DEFAULT_CONFIG);
-  if (overrides.claudeEnabled !== undefined) c.claudeCode.enabled = overrides.claudeEnabled;
+  if (overrides.claudeEnabled !== undefined) c.claude.enabled = overrides.claudeEnabled;
   if (overrides.codexEnabled !== undefined) c.codex.enabled = overrides.codexEnabled;
-  if (overrides.codexOpenAiBlockAt !== undefined)
-    c.codex.openAiWeeklyBlockAtPercent = overrides.codexOpenAiBlockAt;
+  if (overrides.claudeFiveHourBlockAt !== undefined)
+    c.claude.windows.five_hour.blockAtPercent = overrides.claudeFiveHourBlockAt;
+  if (overrides.codexSessionBlockAt !== undefined)
+    c.codex.windows.session.blockAtPercent = overrides.codexSessionBlockAt;
   if (overrides.failClosed !== undefined) c.enforcement.failClosed = overrides.failClosed;
   return c;
 }
@@ -85,19 +88,21 @@ test("claude gates on weekly and 5h windows", async () => {
   const denied = await runGuard("claude", config({}), { fetchUsage: () => over });
   assert.equal(denied.allow, false);
   const reason = denied.evaluation.reasons[0];
+  assert.equal(reason?.kind, "window");
+  if (reason?.kind !== "window") throw new Error("expected window reason");
   assert.equal(reason.windowLabel, "Weekly");
   assert.equal(reason.usedPct, 85);
-  assert.equal(reason.blockAtPct, 80);
+  assert.equal(reason.blockAtPercent, 80);
   assert.equal(reason.resetsAt, null);
 });
 
-test("codex displays both OpenAI windows but enforces weekly only", async () => {
+test("codex displays both OpenAI windows but enforces weekly only by default", async () => {
   const codex = () =>
     snapshot([
       {
         providerId: "codex",
         windows: [
-          { id: "session", label: "Session", usedPct: 2, resetsAt: "2026-08-26T09:24:26.000Z" },
+          { id: "session", label: "Session", usedPct: 90, resetsAt: "2026-08-26T09:24:26.000Z" },
           { id: "weekly", label: "Weekly", usedPct: 13, resetsAt: "2026-08-31T16:04:13.000Z" },
         ],
       },
@@ -106,11 +111,13 @@ test("codex displays both OpenAI windows but enforces weekly only", async () => 
   const allowed = await runGuard("codex", config({}), { fetchUsage: codex });
   assert.equal(allowed.allow, true);
   assert.equal(allowed.evaluation.reasons.length, 0);
-
+  // Session is measured and shown, but monitor-only by default — it must not enforce.
+  const session = allowed.evaluation.displayMeasurements?.find((m) => m.windowId === "session");
+  assert.equal(session?.blockAtPercent, null);
 });
 
 test("codex session usage does not block when weekly usage is under threshold", async () => {
-  const decision = await runGuard("codex", config({ codexOpenAiBlockAt: 80 }), {
+  const decision = await runGuard("codex", config({}), {
     fetchUsage: () =>
       snapshot([{ providerId: "codex", windows: [
         { id: "session", label: "Session", usedPct: 90, resetsAt: "2026-08-26T09:24:26.000Z" },
@@ -120,8 +127,19 @@ test("codex session usage does not block when weekly usage is under threshold", 
   assert.equal(decision.allow, true);
 });
 
+test("codex session usage blocks once explicitly enforced", async () => {
+  const decision = await runGuard("codex", config({ codexSessionBlockAt: 80 }), {
+    fetchUsage: () =>
+      snapshot([{ providerId: "codex", windows: [
+        { id: "session", label: "Session", usedPct: 95, resetsAt: "2026-08-26T09:24:26.000Z" },
+        { id: "weekly", label: "Weekly", usedPct: 10, resetsAt: "2026-08-31T16:04:13.000Z" },
+      ] }]),
+  });
+  assert.equal(decision.allow, false);
+});
+
 test("codex weekly usage blocks and message includes both windows", async () => {
-  const decision = await runGuard("codex", config({ codexOpenAiBlockAt: 80 }), {
+  const decision = await runGuard("codex", config({}), {
     fetchUsage: () =>
       snapshot([{ providerId: "codex", windows: [
         { id: "session", label: "Session", usedPct: 10, resetsAt: "2026-08-26T09:24:26.000Z" },
@@ -130,9 +148,12 @@ test("codex weekly usage blocks and message includes both windows", async () => 
   });
   assert.equal(decision.allow, false);
   assert.equal(decision.evaluation.reasons.length, 1);
-  assert.equal(decision.evaluation.reasons[0]?.windowLabel, "Weekly (OpenAI)");
-  assert.equal(decision.evaluation.reasons[0]?.usedPct, 90);
-  assert.equal(decision.evaluation.reasons[0]?.resetsAt, "2026-08-31T16:04:13.000Z");
+  const reason = decision.evaluation.reasons[0];
+  assert.equal(reason?.kind, "window");
+  if (reason?.kind !== "window") throw new Error("expected window reason");
+  assert.equal(reason.windowLabel, "Weekly (OpenAI)");
+  assert.equal(reason.usedPct, 90);
+  assert.equal(reason.resetsAt, "2026-08-31T16:04:13.000Z");
   const message = formatGuardDeny(decision, "codex");
   assert.match(message, /Weekly \(OpenAI\)/);
   assert.match(message, /90%/);
@@ -166,8 +187,10 @@ test("codex fails closed when the required weekly window is omitted", async () =
       ]),
   });
   assert.equal(decision.allow, false);
-  assert.equal(decision.evaluation.reasons[0]?.windowId, "usageUnknown");
-  assert.match(decision.evaluation.reasons[0]?.detail ?? "", /codexWeekly/);
+  const reason = decision.evaluation.reasons[0];
+  assert.equal(reason?.kind, "usageUnknown");
+  if (reason?.kind !== "usageUnknown") throw new Error("expected usageUnknown reason");
+  assert.match(reason.detail, /weekly/);
 });
 
 test("unreachable usage API fails closed with a reason", async () => {
@@ -177,8 +200,10 @@ test("unreachable usage API fails closed with a reason", async () => {
     },
   });
   assert.equal(decision.allow, false);
-  assert.equal(decision.evaluation.reasons[0]?.windowId, "usageUnknown");
-  assert.match(decision.evaluation.reasons[0]?.detail ?? "", /Could not fetch codex usage/);
+  const reason = decision.evaluation.reasons[0];
+  assert.equal(reason?.kind, "usageUnknown");
+  if (reason?.kind !== "usageUnknown") throw new Error("expected usageUnknown reason");
+  assert.match(reason.detail, /Could not fetch codex usage/);
 });
 
 test("fail-open configs allow when usage is unknown", async () => {
@@ -193,26 +218,107 @@ test("fail-open configs allow when usage is unknown", async () => {
 test("missing provider entry or windows count as unknown usage", async () => {
   const noEntry = await runGuard("codex", config({}), { fetchUsage: () => snapshot([]) });
   assert.equal(noEntry.allow, false);
-  assert.match(noEntry.evaluation.reasons[0]?.detail ?? "", /No codex usage entry/);
+  const noEntryReason = noEntry.evaluation.reasons[0];
+  assert.equal(noEntryReason?.kind, "usageUnknown");
+  if (noEntryReason?.kind === "usageUnknown") {
+    assert.match(noEntryReason.detail, /No codex usage entry/);
+  }
 
   const noWindows = await runGuard("codex", config({}), {
     fetchUsage: () =>
       snapshot([{ providerId: "codex", status: "unavailable", error: "not signed in" }]),
   });
   assert.equal(noWindows.allow, false);
-  assert.match(noWindows.evaluation.reasons[0]?.detail ?? "", /unavailable — not signed in/);
+  const noWindowsReason = noWindows.evaluation.reasons[0];
+  assert.equal(noWindowsReason?.kind, "usageUnknown");
+  if (noWindowsReason?.kind === "usageUnknown") {
+    assert.match(noWindowsReason.detail, /unavailable — not signed in/);
+  }
 });
 
-test("a missing gate window is unknown usage, not a pass", async () => {
-  const partial = snapshot([
-    {
-      providerId: "claude",
-      windows: [{ id: "weekly", label: "Weekly", usedPct: 10 }],
-    },
-  ]);
-  const decision = await runGuard("claude", config({}), { fetchUsage: () => partial });
+test("claude fails closed when a numeric five_hour window is omitted", async () => {
+  const decision = await runGuard("claude", config({}), {
+    fetchUsage: () =>
+      snapshot([
+        {
+          providerId: "claude",
+          windows: [{ id: "weekly", label: "Weekly", usedPct: 10 }],
+        },
+      ]),
+  });
   assert.equal(decision.allow, false);
-  assert.match(decision.evaluation.reasons[0]?.detail ?? "", /claudeRolling/);
+  const reason = decision.evaluation.reasons[0];
+  assert.equal(reason?.kind, "usageUnknown");
+  if (reason?.kind !== "usageUnknown") throw new Error("expected usageUnknown reason");
+  assert.match(reason.detail, /five_hour/);
+});
+
+test("claude still enforces weekly when five_hour is monitor-only and omitted", async () => {
+  const decision = await runGuard("claude", config({ claudeFiveHourBlockAt: null }), {
+    fetchUsage: () =>
+      snapshot([
+        {
+          providerId: "claude",
+          windows: [{ id: "weekly", label: "Weekly", usedPct: 85 }],
+        },
+      ]),
+  });
+  assert.equal(decision.allow, false);
+  const reason = decision.evaluation.reasons[0];
+  assert.equal(reason?.kind, "window");
+  if (reason?.kind !== "window") throw new Error("expected window reason");
+  assert.equal(reason.windowLabel, "Weekly");
+});
+
+test("claude five_hour with null threshold does not require the API window", async () => {
+  const decision = await runGuard("claude", config({ claudeFiveHourBlockAt: null }), {
+    fetchUsage: () =>
+      snapshot([
+        {
+          providerId: "claude",
+          windows: [{ id: "weekly", label: "Weekly", usedPct: 10 }],
+        },
+      ]),
+  });
+  assert.equal(decision.allow, true);
+  assert.equal(
+    decision.evaluation.displayMeasurements?.find((m) => m.windowId === "five_hour"),
+    undefined,
+  );
+});
+
+test("claude fails closed when the required weekly window is omitted", async () => {
+  const decision = await runGuard("claude", config({}), {
+    fetchUsage: () =>
+      snapshot([
+        {
+          providerId: "claude",
+          windows: [{ id: "five_hour", label: "Session", usedPct: 5 }],
+        },
+      ]),
+  });
+  assert.equal(decision.allow, false);
+  const reason = decision.evaluation.reasons[0];
+  assert.equal(reason?.kind, "usageUnknown");
+  if (reason?.kind !== "usageUnknown") throw new Error("expected usageUnknown reason");
+  assert.match(reason.detail, /weekly/);
+});
+
+test("codex fails closed when a numeric session window is omitted", async () => {
+  const decision = await runGuard("codex", config({ codexSessionBlockAt: 80 }), {
+    fetchUsage: () =>
+      snapshot([
+        {
+          providerId: "codex",
+          windows: [{ id: "weekly", label: "Weekly", usedPct: 13 }],
+        },
+      ]),
+  });
+  assert.equal(decision.allow, false);
+  const reason = decision.evaluation.reasons[0];
+  assert.equal(reason?.kind, "usageUnknown");
+  if (reason?.kind !== "usageUnknown") throw new Error("expected usageUnknown reason");
+  assert.match(reason.detail, /session/);
 });
 
 test("override and exceptions bypass every gate", async () => {
@@ -222,14 +328,14 @@ test("override and exceptions bypass every gate", async () => {
       windows: [{ id: "session", label: "Session", usedPct: 99 }],
     },
   ]);
-  const overridden = await runGuard("codex", config({ codexOpenAiBlockAt: 50 }), {
+  const overridden = await runGuard("codex", config({ codexSessionBlockAt: 50 }), {
     fetchUsage: () => over,
     now: new Date(),
   });
   // No override stored in this temp home — still blocked.
   assert.equal(overridden.allow, false);
 
-  const excluded = await runGuard("codex", config({ codexOpenAiBlockAt: 50 }), {
+  const excluded = await runGuard("codex", config({ codexSessionBlockAt: 50 }), {
     fetchUsage: () => over,
     sessionId: "sess-exempt",
   });
@@ -237,7 +343,7 @@ test("override and exceptions bypass every gate", async () => {
 
   // Register the exception through the same store the guard reads.
   const home = tempHome("llm-budget-guard-exc-");
-  const cfg = structuredClone(config({ codexOpenAiBlockAt: 50 }));
+  const cfg = structuredClone(config({ codexSessionBlockAt: 50 }));
   cfg.excludeSessionIds = ["sess-exempt"];
   const exempted = await runGuard("codex", cfg, {
     home,
@@ -247,7 +353,7 @@ test("override and exceptions bypass every gate", async () => {
   assert.equal(exempted.allow, true);
 });
 
-test("claude weekly window uses the normalized vendor id", async () => {
+test("claude weekly window uses the vendor's own window id", async () => {
   const forkNaming = snapshot([
     {
       providerId: "claude",
@@ -259,7 +365,11 @@ test("claude weekly window uses the normalized vendor id", async () => {
   ]);
   const denied = await runGuard("claude", config({}), { fetchUsage: () => forkNaming });
   assert.equal(denied.allow, false);
-  assert.equal(denied.evaluation.reasons[0]?.windowLabel, "Weekly");
+  const reason = denied.evaluation.reasons[0];
+  assert.equal(reason?.kind, "window");
+  if (reason?.kind === "window") {
+    assert.equal(reason.windowLabel, "Weekly");
+  }
 
   const allowed = await runGuard("claude", config({}), { fetchUsage: CLAUDE_SNAPSHOT });
   assert.equal(allowed.allow, true);

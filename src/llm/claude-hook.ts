@@ -1,5 +1,5 @@
 import { parseJsonText } from "../json-value.js";
-import { ensureLlmConfig, type LlmConfig } from "./config.js";
+import { ensureConfig, type Config } from "../config.js";
 import {
   formatGuardDeny,
   runGuard,
@@ -34,7 +34,7 @@ export interface ClaudeHookResponse {
 }
 
 export interface ClaudeHookDeps extends GuardDeps {
-  config?: LlmConfig;
+  config?: Config;
 }
 
 /**
@@ -54,11 +54,11 @@ export async function handleClaudeHook(
 
   if (!CLAUDE_ENFORCE_EVENTS.has(eventName)) return base;
 
-  let config: LlmConfig;
+  let config: Config;
   try {
     // Load inside the handler so a broken config.json denies (fail closed)
     // instead of bypassing via a default-parameter throw.
-    config = deps.config ?? ensureLlmConfig(deps.home);
+    config = deps.config ?? ensureConfig(deps.home);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     return {

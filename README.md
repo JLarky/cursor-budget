@@ -98,11 +98,12 @@ threshold. Undo with `llm-budget cursor uninstall`.
 ```
 $ llm-budget cursor status
 llm-budget
+Config: ~/.config/llm-budget/config.jsonc
+On unknown usage: block (failClosed)
 
-Cursor Models (auto):
-  1.38%  (block at 90%)
-Other Models (api):
-  0%  (block at 90%)
+Cursor Models: 1.38% (block at 90%)
+Other Models: 0% (block at 90%)
+Total: 1.0% (monitor-only)
 Period spend:
   $27.51 / $400.00
 Cycle resets: 9/17/2026, 9:26:51 PM
@@ -112,7 +113,6 @@ Last 60 minutes
   Events: 3 / 500
 
 Credential: expires in 50d (10/9/2026)
-On unknown usage: block (failClosed)
 Override: none
 ```
 
@@ -125,8 +125,8 @@ Two gates, in separate failure domains:
 
 | Gate | Source | Purpose |
 |---|---|---|
-| **Quota** | Cursor dashboard API | the real limit — blocks at `%` of your plan |
-| **Rate** | local SQLite event count | runaway-loop catch, `500` events/hour |
+| **Usage windows** | Cursor dashboard API | plan meters — block at `%` when configured |
+| **Event rate** | local SQLite event count | runaway-loop backstop, `500` events/hour |
 
 Cursor's `hooks.json` has its own unrelated `failClosed` field, which governs
 what Cursor does when the hook *process* fails. `install` sets it to `false`
@@ -139,29 +139,41 @@ expired token means the guard starts blocking.
 
 One file for every agent: `~/.config/llm-budget/config.jsonc`.
 
-Only overrides are stored; defaults live in code. All keys optional.
+Every provider uses the same shape: `enabled` plus a `windows` map. Each window
+has `blockAtPercent`: a number enforces at that threshold, `null` is
+monitor-only (measured and shown in status, never blocks). Window names match
+what each vendor reports. There is no inheritance between windows.
+
+Invalid config fails closed on enforcement paths — broken files are rejected
+with a visible error, not silently replaced with defaults.
 
 ```jsonc
 {
-  "claudeCode": {
+  "claude": {
     "enabled": true,
-    "weeklyBlockAtPercent": 80,
-    "rolling5hBlockAtPercent": 80
+    "windows": {
+      "weekly": { "blockAtPercent": 80 },
+      "five_hour": { "blockAtPercent": 80 }
+    }
   },
   "codex": {
     "enabled": true,
-    "weeklyBlockAtPercent": 80
+    "windows": {
+      "weekly": { "blockAtPercent": 80 },
+      "session": { "blockAtPercent": null }
+    }
   },
   "cursor": {
-    "quota": {
-      "cursorModelsBlockAtPercent": 90,  // "Cursor Models" meter, 0-100
-      "otherModelsBlockAtPercent": 90,   // "Other Models" meter, 0-100
-      "totalBlockAtPercent": null,       // optional overall gate
-      "maxStaleMs": 3600000,             // older snapshot => usage unknown
-      "cacheTtlMs": 90000                // before trying the network again
+    "enabled": true,
+    "windows": {
+      "cursorModels": { "blockAtPercent": 90 },
+      "otherModels": { "blockAtPercent": 90 },
+      "total": { "blockAtPercent": null }
     },
     "rateLimit": { "maxEventsPerHour": 500 },
-    "warnings": [0.5, 0.75, 0.9],        // fractions of the block threshold, 0-1
+    "maxStaleMs": 3600000,
+    "cacheTtlMs": 90000,
+    "warnings": [0.5, 0.75, 0.9],
     "excludeConversationIds": []
   },
   "enforcement": { "failClosed": true },
@@ -169,9 +181,24 @@ Only overrides are stored; defaults live in code. All keys optional.
 }
 ```
 
+Window reference:
+
+| Key | Agent | Vendor window |
+|---|---|---|
+| `claude.windows.weekly` | Claude Code | 7-day rolling cap |
+| `claude.windows.five_hour` | Claude Code | rolling 5-hour cap |
+| `codex.windows.weekly` | Codex | OpenAI weekly rate limit |
+| `codex.windows.session` | Codex | OpenAI 5-hour session (monitor-only by default) |
+| `cursor.windows.cursorModels` | Cursor Agent | dashboard "Cursor Models" meter |
+| `cursor.windows.otherModels` | Cursor Agent | dashboard "Other Models" meter |
+| `cursor.windows.total` | Cursor Agent | combined spend meter (monitor-only by default) |
+
+`cursor.rateLimit.maxEventsPerHour` is the event-rate backstop (not a budget
+window). Set it to `null` to disable.
+
 Percentages come from the vendor usage APIs (Claude Code's local OAuth
-creds, Codex `auth.json`, Cursor dashboard). Each gate blocks when usage
-reaches its threshold. If usage cannot be determined the guards block under
+creds, Codex `auth.json`, Cursor dashboard). Each enforced window blocks when
+usage reaches its threshold. If usage cannot be determined the guards block under
 the default `failClosed: true`.
 
 Warnings fire as desktop notifications once per threshold per billing cycle.

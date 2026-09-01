@@ -1,12 +1,11 @@
-import type { LlmConfig } from "./config.js";
+import type { Config } from "../config.js";
 import { openLlmDb, getState } from "./db.js";
 import {
-  formatBudgetBlockMessage,
   evaluateBudget,
   formatPercent,
   type BudgetEvaluation,
-} from "./budget/evaluator.js";
-import type { WindowMeasurement } from "./budget/evaluator.js";
+  type WindowMeasurement,
+} from "../budget/evaluator.js";
 import {
   fetchDirectUsage,
   providerUsage,
@@ -32,7 +31,7 @@ const ZERO_SNAPSHOT: UsageSnapshot = { fetchedAt: "", providers: [] };
 export interface GuardDecision {
   allow: boolean;
   evaluation: BudgetEvaluation;
-  config: LlmConfig;
+  config: Config;
   snapshot: UsageSnapshot;
   sessionId: string;
 }
@@ -47,12 +46,12 @@ export interface GuardDecision {
  */
 export async function runGuard(
   agent: GuardAgent,
-  config: LlmConfig,
+  config: Config,
   deps: GuardDeps = {},
 ): Promise<GuardDecision> {
   // Disabled agents short-circuit before any network work: opting out of a
   // tool's guard must not be able to block it either.
-  const enabled = agent === "claude" ? config.claudeCode.enabled : config.codex.enabled;
+  const enabled = agent === "claude" ? config.claude.enabled : config.codex.enabled;
   if (!enabled) {
     return {
       allow: true,
@@ -93,7 +92,7 @@ export async function runGuard(
   const measurements =
     provider && !usageUnknownReason ? buildMeasurements(agent, config, provider) : [];
   if (!usageUnknownReason) {
-    usageUnknownReason = missingGates(agent, measurements);
+    usageUnknownReason = missingGates(agent, config, measurements);
   }
 
   const evaluation = evaluateBudget({
@@ -115,39 +114,40 @@ export async function runGuard(
   };
 }
 
-function effectiveCodexBlockAt(config: LlmConfig): number {
-  return config.codex.openAiWeeklyBlockAtPercent ?? config.codex.weeklyBlockAtPercent;
-}
-
-function buildMeasurements(
+/**
+ * Build the window measurements for one agent from its vendor usage report.
+ * Shared by `runGuard` and the `status` view so the numbers and thresholds
+ * shown always match what the guard actually enforces.
+ */
+export function buildMeasurements(
   agent: GuardAgent,
-  config: LlmConfig,
+  config: Config,
   provider: ProviderUsage,
 ): WindowMeasurement[] {
-  const window = (id: string): (typeof provider.windows)[number] | null =>
+  const findWindow = (id: string): (typeof provider.windows)[number] | null =>
     provider.windows.find((w) => w.id === id) ?? null;
 
   if (agent === "claude") {
     const measurements: WindowMeasurement[] = [];
-    const weekly = window("weekly");
+    const weekly = findWindow("weekly");
     if (weekly) {
       measurements.push({
-        windowId: "claudeWeekly",
+        windowId: "weekly",
         label: "Weekly",
         usedPct: weekly.usedPct ?? Number.NaN,
-        blockAtPct: config.claudeCode.weeklyBlockAtPercent,
+        blockAtPercent: config.claude.windows.weekly.blockAtPercent,
         usedDisplay: pctDisplay(weekly.usedPct),
         denomDisplay: "Claude weekly limit",
         resetsAt: weekly.resetsAt,
       });
     }
-    const rolling = window("five_hour");
+    const rolling = findWindow("five_hour");
     if (rolling) {
       measurements.push({
-        windowId: "claudeRolling",
+        windowId: "five_hour",
         label: "Rolling 5h",
         usedPct: rolling.usedPct ?? Number.NaN,
-        blockAtPct: config.claudeCode.rolling5hBlockAtPercent,
+        blockAtPercent: config.claude.windows.five_hour.blockAtPercent,
         usedDisplay: pctDisplay(rolling.usedPct),
         denomDisplay: "Claude 5h limit",
         resetsAt: rolling.resetsAt,
@@ -157,29 +157,26 @@ function buildMeasurements(
   }
 
   const measurements: WindowMeasurement[] = [];
-  const blockAtPct = effectiveCodexBlockAt(config);
-
-  const session = window("session");
+  const session = findWindow("session");
   if (session) {
     measurements.push({
-      windowId: "codexSession",
+      windowId: "session",
       label: "Session (OpenAI 5h)",
       usedPct: session.usedPct ?? Number.NaN,
-      blockAtPct,
-      enforce: false,
+      blockAtPercent: config.codex.windows.session.blockAtPercent,
       usedDisplay: pctDisplay(session.usedPct),
       denomDisplay: "OpenAI 5h limit",
       resetsAt: session.resetsAt,
     });
   }
 
-  const weekly = window("weekly");
+  const weekly = findWindow("weekly");
   if (weekly) {
     measurements.push({
-      windowId: "codexWeekly",
+      windowId: "weekly",
       label: "Weekly (OpenAI)",
       usedPct: weekly.usedPct ?? Number.NaN,
-      blockAtPct,
+      blockAtPercent: config.codex.windows.weekly.blockAtPercent,
       usedDisplay: pctDisplay(weekly.usedPct),
       denomDisplay: "OpenAI weekly limit",
       resetsAt: weekly.resetsAt,
@@ -189,15 +186,24 @@ function buildMeasurements(
   return measurements;
 }
 
-/** Every configured gate must have a measurement, else usage is unknown. */
-function missingGates(agent: GuardAgent, measurements: WindowMeasurement[]): string | null {
+/**
+ * Numerically configured windows must be present in the vendor report;
+ * `null` thresholds are monitor-only and optional. An omitted numeric gate
+ * is unknown usage so failClosed can block instead of silently allowing.
+ */
+function missingGates(
+  agent: GuardAgent,
+  config: Config,
+  measurements: WindowMeasurement[],
+): string | null {
   const present = new Set(measurements.map((m) => m.windowId));
-  let needed: WindowMeasurement["windowId"][] = [];
+  const needed: WindowMeasurement["windowId"][] = [];
   if (agent === "claude") {
-    needed = ["claudeWeekly", "claudeRolling"];
+    if (config.claude.windows.weekly.blockAtPercent !== null) needed.push("weekly");
+    if (config.claude.windows.five_hour.blockAtPercent !== null) needed.push("five_hour");
   } else {
-    // For codex: weekly is required, session is optional (include both if available)
-    needed = ["codexWeekly"];
+    if (config.codex.windows.weekly.blockAtPercent !== null) needed.push("weekly");
+    if (config.codex.windows.session.blockAtPercent !== null) needed.push("session");
   }
   const missing = needed.filter((id) => !present.has(id));
   if (missing.length === 0) return null;
@@ -208,11 +214,52 @@ function pctDisplay(usedPct: number | null): string {
   return usedPct === null ? "unknown" : formatPercent(usedPct);
 }
 
+const TOOL_LABELS = {
+  claude: "Claude Code",
+  codex: "Codex",
+} satisfies Record<GuardAgent, string>;
+
 /** Render the user-facing deny message (session id + escape hatches). */
 export function formatGuardDeny(
   decision: Pick<GuardDecision, "evaluation">,
   agent: GuardAgent,
   sessionId?: string,
 ): string {
-  return formatBudgetBlockMessage(decision.evaluation, agent, sessionId);
+  const evaluation = decision.evaluation;
+  const id = sessionId?.trim() || "unknown";
+  const tool = TOOL_LABELS[agent];
+  const lines = [`${tool} blocked by llm-budget.`, "", `Session id: ${id}`, ""];
+
+  const primary = evaluation.reasons[0];
+  if (primary) {
+    if (primary.kind === "usageUnknown") {
+      lines.push("Usage could not be determined:");
+      lines.push(`  ${primary.detail}`);
+      lines.push("");
+      lines.push("Blocked because enforcement.failClosed is on (the default).");
+    } else if (primary.kind === "window") {
+      lines.push(`${primary.windowLabel} budget reached:`);
+      lines.push(
+        `  ${formatPercent(primary.usedPct)} of ${formatPercent(primary.blockAtPercent)} block threshold`,
+        `  ${primary.usedDisplay} / ${primary.denomDisplay}`,
+      );
+      if (primary.resetsAt) lines.push(`  Resets: ${primary.resetsAt}`);
+      const informational = (evaluation.displayMeasurements ?? []).filter(
+        (m) => m.blockAtPercent === null && m.windowId !== primary.windowId,
+      );
+      for (const m of informational) {
+        lines.push("");
+        lines.push(`${m.label}:`);
+        lines.push(`  ${m.usedDisplay} / ${m.denomDisplay}`);
+        if (m.resetsAt) lines.push(`  Resets: ${m.resetsAt}`);
+      }
+    }
+    lines.push("");
+  }
+
+  lines.push("Run:");
+  lines.push("  llm-budget status");
+  lines.push("  llm-budget override 30m");
+  lines.push(`  llm-budget except add ${id}`);
+  return lines.join("\n");
 }

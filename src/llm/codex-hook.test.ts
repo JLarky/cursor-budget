@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DEFAULT_CONFIG, type LlmConfig } from "./config.js";
+import { DEFAULT_CONFIG, type Config } from "../config.js";
 import {
   CODEX_ENFORCE_EVENTS,
   handleCodexHook,
@@ -9,7 +9,7 @@ import {
 } from "./codex-hook.js";
 import type { UsageSnapshot } from "./usage/index.js";
 
-function config(): LlmConfig {
+function config(): Config {
   return structuredClone(DEFAULT_CONFIG);
 }
 function usage(usedPct: number): () => Promise<UsageSnapshot> {

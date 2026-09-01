@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { ensureLlmConfig, loadLlmConfigForRead, type LlmConfig } from "./config.js";
+import { ensureConfig, loadConfigForRead, type Config } from "../config.js";
 import { getState, openLlmDb, setState } from "./db.js";
 import { runGuard, formatGuardDeny } from "./guard.js";
 import { notify } from "../notify.js";
@@ -14,7 +14,7 @@ export interface WatchdogDeps {
   once?: boolean;
   /** Injectable decision source; defaults to runGuard("codex"). */
   decide?: () => Pick<GuardDecision, "allow" | "evaluation" | "sessionId"> & {
-    config: LlmConfig;
+    config: Config;
   };
   /** Injectable process list; returns [pid, command line]. */
   listCodexProcesses?: () => Array<{ pid: number; command: string }>;
@@ -65,14 +65,14 @@ async function watchdogPass(
   // must not silently stop guarding. Under failClosed that means treat every
   // codex process as over-budget; with failClosed off, sit this pass out.
   let decision: Pick<GuardDecision, "allow" | "evaluation" | "sessionId"> & {
-    config: LlmConfig;
+    config: Config;
   };
   try {
     decision = deps.decide
       ? deps.decide()
-      : await runGuard("codex", ensureLlmConfig(home), { now });
+      : await runGuard("codex", ensureConfig(home), { now });
   } catch (error) {
-    const lenient = loadLlmConfigForRead(home).config.enforcement.failClosed === false;
+    const lenient = loadConfigForRead(home).config.enforcement.failClosed === false;
     if (!lenient) {
       const targets = (deps.listCodexProcesses ?? defaultListCodexProcesses)().filter(
         ({ pid }) => pid !== process.pid,

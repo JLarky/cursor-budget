@@ -1,5 +1,5 @@
-import { formatSharedConfigFile } from "../unified-config.js";
+import { formatConfigFile } from "../config.js";
 
 export function configCommand(): string {
-  return formatSharedConfigFile();
+  return formatConfigFile();
 }
