@@ -167,10 +167,12 @@ test("renderDenyReason names the session id and the recover commands", () => {
 test("status distinguishes not-metered from unavailable", () => {
   const unmetered = renderGrokStatus(state({ weekly: unmeteredWeekly() }), { installed: true });
   assert.match(unmetered.join("\n"), /not metered on this plan/);
+  assert.match(unmetered.join("\n"), /resets 2026-09-08T00:00:00.000Z \(in 7 days\)/);
 
   const unavailable = renderGrokStatus(state({ weekly: unavailableWeekly() }), { installed: true });
   assert.match(unavailable.join("\n"), /unavailable — expired credential/);
   assert.doesNotMatch(unavailable.join("\n"), /not metered/);
+  assert.doesNotMatch(unavailable.join("\n"), /resets /);
 });
 
 test("status shows disabled without a weekly line when the gate is off", () => {

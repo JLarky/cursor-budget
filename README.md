@@ -167,7 +167,7 @@ On unknown usage: block (failClosed)
 
 Grok CLI:
   Hooks: installed
-  Weekly: 12% (block at 80%) — resets 2026-09-08T00:00:00.000Z
+  Weekly: 12% (block at 80%) — resets 2026-09-08T00:00:00.000Z (in 6 days and 4 hours)
   Override: none
   Exceptions: none
 ```

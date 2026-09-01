@@ -3,6 +3,7 @@ import { openLlmDb, getState } from "./db.js";
 import {
   evaluateBudget,
   formatPercent,
+  formatResetCountdown,
   type BudgetEvaluation,
   type WindowMeasurement,
 } from "../budget/evaluator.js";
@@ -238,12 +239,14 @@ export function formatGuardDeny(
       lines.push("");
       lines.push("Blocked because enforcement.failClosed is on (the default).");
     } else if (primary.kind === "window") {
+      const now = new Date();
       lines.push(`${primary.windowLabel} budget reached:`);
       lines.push(
         `  ${formatPercent(primary.usedPct)} of ${formatPercent(primary.blockAtPercent)} block threshold`,
         `  ${primary.usedDisplay} / ${primary.denomDisplay}`,
       );
-      if (primary.resetsAt) lines.push(`  Resets: ${primary.resetsAt}`);
+      if (primary.resetsAt)
+        lines.push(`  Resets: ${primary.resetsAt}${formatResetCountdown(primary.resetsAt, now)}`);
       const informational = (evaluation.displayMeasurements ?? []).filter(
         (m) => m.blockAtPercent === null && m.windowId !== primary.windowId,
       );
@@ -251,7 +254,7 @@ export function formatGuardDeny(
         lines.push("");
         lines.push(`${m.label}:`);
         lines.push(`  ${m.usedDisplay} / ${m.denomDisplay}`);
-        if (m.resetsAt) lines.push(`  Resets: ${m.resetsAt}`);
+        if (m.resetsAt) lines.push(`  Resets: ${m.resetsAt}${formatResetCountdown(m.resetsAt, now)}`);
       }
     }
     lines.push("");
