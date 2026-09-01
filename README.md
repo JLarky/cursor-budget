@@ -152,12 +152,13 @@ its stdout rather than `exec`ing it, so a missing Node, a crash, or a timeout
 all fall back to a hard-coded deny instead of silently letting the tool call
 through.
 
-xAI's weekly credit percent is not published on every plan. A plan that
-reports no percent is **unmetered**, not 0% — `unmetered` and `unavailable`
-(auth expired, request failed) are shown as distinct status lines because
-their fixes are different. Because this is a guard, `grok.windows.weekly`
-ships enforced at `80`; an unmetered or unavailable reading fails closed
-like any other unknown usage until you set it to `null` or use an override.
+If xAI omits the weekly percent on a payload that still has a billing period,
+status shows `0%` and a warning. The gate treats that as 0, so it does not
+block. A field that is actually `0` prints `0%` with no warning.
+`unavailable` is auth expired or the request failed. An out-of-range percent
+still prints `no weekly percent` and fails closed like other unknown usage.
+
+Because this is a guard, `grok.windows.weekly` ships enforced at `80`.
 
 ```
 $ llm-budget grok status

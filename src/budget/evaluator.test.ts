@@ -205,6 +205,31 @@ test("formatWindowLine never advertises block-at for unavailable meters", () => 
   );
 });
 
+test("formatWindowLine prints unmetered as no weekly percent and still names the armed gate", () => {
+  assert.equal(
+    formatWindowLine(
+      measurement({
+        usedPct: Number.NaN,
+        usedDisplay: "no weekly percent",
+        blockAtPercent: 80,
+        meter: { kind: "unmetered" },
+      }),
+    ),
+    "Weekly: no weekly percent (block at 80%)",
+  );
+  assert.equal(
+    formatWindowLine(
+      measurement({
+        usedPct: Number.NaN,
+        usedDisplay: "no weekly percent",
+        blockAtPercent: null,
+        meter: { kind: "unmetered" },
+      }),
+    ),
+    "Weekly: no weekly percent (monitor-only)",
+  );
+});
+
 test("unavailable enforced meters fail closed instead of advertising a pass", () => {
   const blocked = evaluateBudget({
     measurements: [

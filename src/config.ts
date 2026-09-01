@@ -69,8 +69,8 @@ export interface GrokConfig {
   windows: {
     /**
      * xAI's weekly credit pool. Ships enforced at 80 (this product is a
-     * guard, not a monitor) — plans that report no percent gate `unmetered`
-     * usage the same as any other unknown usage until set to `null`.
+     * guard, not a monitor). A missing percent with a billing period is
+     * treated as 0% with a status warning. It does not fail closed.
      */
     weekly: WindowConfig;
   };
@@ -249,8 +249,8 @@ export function renderConfigFile(c: Config): string {
 //   cursor.windows.otherModels    Dashboard "Other Models" (api) meter.
 //   cursor.windows.total          Combined spend meter, monitor-only by default.
 //   grok.windows.weekly           xAI's weekly credit pool. Enforced at 80 by
-//                                 default; plans that report no percent are
-//                                 "unmetered" usage, not 0%.
+//                                 default. A missing percent is 0% plus a
+//                                 warning, not fail-closed unknown usage.
 {
   "claude": {
     // Gate Claude Code sessions at all?

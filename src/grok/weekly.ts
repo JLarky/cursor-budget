@@ -5,7 +5,7 @@ import { asRecord, fetchJson, finiteNumber, type FetchFn } from "../llm/usage/ht
 import { grokAuthLockPath, grokAuthPath } from "../llm/paths.js";
 import { GROK_WEEKLY_CACHE_KEY } from "../db/keys.js";
 import { asJsonObject, jsonString, parseJsonText, type JsonObject, type JsonValue } from "../json-value.js";
-import { percent, type GrokWeekly, type Reading } from "./policy.js";
+import { percent, type GrokWeekly, type Reading, type ReadingSource } from "./policy.js";
 
 const CREDITS_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 const SETTINGS_URL = "https://cli-chat-proxy.grok.com/v1/settings";
@@ -257,12 +257,11 @@ function unavailableWeekly(because: string, resetsAt: string | null, now: Date):
 }
 
 /**
- * Boundary parse. Pure, total, never throws — every malformed or unexpected
- * shape becomes an `unmetered` or `unavailable` reading with a human-readable
- * `because`.
- *
- * `unmetered` requires a recognizable billing period, which is how we know
- * xAI actually answered rather than handed us an error body with a 200.
+ * Boundary parse. Pure, total, never throws. A recognizable billing period is
+ * how we know xAI answered rather than handed us an error body with a 200.
+ * A missing percent with a period is measured 0 (`omittedPercent`). An
+ * out-of-range percent with a period stays `unmetered`. No period is
+ * `unavailable`.
  */
 export function parseCreditsPayload(json: JsonValue, fetchedAt: Date): GrokWeekly {
   const fetchedAtIso = fetchedAt.toISOString();
@@ -305,12 +304,28 @@ export function parseCreditsPayload(json: JsonValue, fetchedAt: Date): GrokWeekl
   if (resetsAt === null) {
     return unavailableWeekly("Grok billing response had no billing period", null, fetchedAt);
   }
+  if (reported !== null) {
+    return {
+      percent: { kind: "unmetered", because: "Grok plan does not report a weekly credit percent" },
+      resetsAt,
+      planLabel: null,
+      fetchedAt: fetchedAtIso,
+    };
+  }
+  const omitted = percent(0);
+  if (omitted === null) {
+    return unavailableWeekly("Grok billing response omitted weekly percent", resetsAt, fetchedAt);
+  }
   return {
-    percent: { kind: "unmetered", because: "Grok plan does not report a weekly credit percent" },
+    percent: { kind: "measured", percent: omitted, source: "omittedPercent" },
     resetsAt,
     planLabel: null,
     fetchedAt: fetchedAtIso,
   };
+}
+
+function isReadingSource(value: string | null): value is ReadingSource {
+  return value === "creditUsagePercent" || value === "onDemandRatio" || value === "omittedPercent";
 }
 
 function parseCachedReading(value: JsonValue | undefined): Reading | null {
@@ -320,7 +335,9 @@ function parseCachedReading(value: JsonValue | undefined): Reading | null {
   if (kind === "measured") {
     const raw = finiteNumber(obj.percent);
     const source = jsonString(obj.source);
-    if (raw === null || (source !== "creditUsagePercent" && source !== "onDemandRatio")) return null;
+    if (raw === null || !isReadingSource(source)) {
+      return null;
+    }
     const measured = percent(raw);
     if (measured === null) return null;
     return { kind: "measured", percent: measured, source };

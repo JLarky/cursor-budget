@@ -1,12 +1,16 @@
 import * as v from "valibot";
-import { formatResetCountdown } from "../budget/evaluator.js";
+import {
+  formatPercent,
+  formatWindowLine,
+  type WindowMeasurement,
+} from "../budget/evaluator.js";
 import type { GrokConfig } from "../config.js";
 
 /**
  * A percent of xAI's own weekly pool, 0-100, finite. Minted only by `percent`,
  * so a value that has not passed through validation cannot be spent as a
- * measured percent — the "missing means 0%" bug has to get past the type
- * system first.
+ * measured percent. A missing xAI field becomes `omittedPercent` at the
+ * parser. It never arrives here as a raw 0 labeled `creditUsagePercent`.
  */
 const PercentSchema = v.pipe(
   v.number(),
@@ -23,15 +27,14 @@ export function percent(value: number): Percent | null {
 }
 
 /** Where a measured percent came from, so a fallback is never mistaken for the real meter. */
-export type ReadingSource = "creditUsagePercent" | "onDemandRatio";
+export type ReadingSource = "creditUsagePercent" | "onDemandRatio" | "omittedPercent";
 
 /**
- * The weekly pool reading. There is no `number | null` and no NaN — "we don't
- * know" is a case, not a value. The two not-known cases are distinct because
- * their fixes are distinct: `unmetered` means xAI answered but this plan
- * publishes no weekly percent (retrying will not help; run monitor-only or
- * accept the fail-closed default). `unavailable` means we could not get a
- * fresh authenticated answer at all (retrying, or signing in, may help).
+ * The weekly pool reading. There is no `number | null` and no NaN. "We don't
+ * know" is a case, not a value. `omittedPercent` is measured 0 when xAI
+ * answered without `creditUsagePercent`. Status warns. The gate does not
+ * fail closed. `unmetered` remains for other non-percent shapes.
+ * `unavailable` means we could not get a fresh authenticated answer.
  */
 export type Reading =
   | { readonly kind: "measured"; readonly percent: Percent; readonly source: ReadingSource }
@@ -237,6 +240,9 @@ export function renderGrokStatus(state: GateState, hooks: HookInstallState): rea
     return lines;
   }
   lines.push(renderWeeklyLine(state.weekly, state.gate, state.now));
+  if (state.weekly.percent.kind === "measured" && state.weekly.percent.source === "omittedPercent") {
+    lines.push("Warning: xAI omitted weekly percent; treating as 0%");
+  }
   const overrideActive =
     state.overrideUntil !== null && state.overrideUntil.getTime() > state.now.getTime();
   lines.push(
@@ -249,18 +255,41 @@ export function renderGrokStatus(state: GateState, hooks: HookInstallState): rea
 }
 
 function renderWeeklyLine(weekly: GrokWeekly, gate: Gate, now: Date): string {
-  const resetSuffix = weekly.resetsAt
-    ? ` — resets ${weekly.resetsAt}${formatResetCountdown(weekly.resetsAt, now)}`
-    : "";
-  const gateSuffix = gate.kind === "armed" ? `block at ${gate.blockAtPercent}%` : "monitor-only";
+  return formatWindowLine(weeklyMeasurement(weekly, gate), now);
+}
+
+function weeklyMeasurement(weekly: GrokWeekly, gate: Gate): WindowMeasurement {
   const reading = weekly.percent;
+  const blockAtPercent = gate.kind === "armed" ? gate.blockAtPercent : null;
+  const base = {
+    windowId: "weekly" as const,
+    label: "Weekly",
+    blockAtPercent,
+    denomDisplay: "xAI weekly credit",
+    resetsAt: weekly.resetsAt,
+  };
   switch (reading.kind) {
     case "measured":
-      return `Weekly: ${reading.percent}% (${gateSuffix})${resetSuffix}`;
+      return {
+        ...base,
+        usedPct: reading.percent,
+        usedDisplay: formatPercent(reading.percent),
+        meter: { kind: "percent" as const },
+      };
     case "unmetered":
-      return `Weekly: not metered on this plan — ${reading.because} (${gateSuffix})${resetSuffix}`;
+      return {
+        ...base,
+        usedPct: Number.NaN,
+        usedDisplay: "no weekly percent",
+        meter: { kind: "unmetered" as const },
+      };
     case "unavailable":
-      return `Weekly: unavailable — ${reading.because} (${gateSuffix})${resetSuffix}`;
+      return {
+        ...base,
+        usedPct: Number.NaN,
+        usedDisplay: "unavailable",
+        meter: { kind: "unavailable" as const },
+      };
     default: {
       const _exhaustive: never = reading;
       return _exhaustive;
