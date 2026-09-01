@@ -14,8 +14,10 @@ test("install writes the owned hooks file and a matching wrapper", () => {
 
   const hooks = JSON.parse(readFileSync(grokHooksFilePath(home), "utf8"));
   assert.equal(hooks.hooks.PreToolUse.length, 1);
-  assert.equal(hooks.hooks.PreToolUse[0].command, grokHookWrapperPath(home));
-  assert.equal(hooks.hooks.PreToolUse[0].timeout, 10);
+  assert.equal(hooks.hooks.PreToolUse[0].hooks.length, 1);
+  assert.equal(hooks.hooks.PreToolUse[0].hooks[0].type, "command");
+  assert.equal(hooks.hooks.PreToolUse[0].hooks[0].command, grokHookWrapperPath(home));
+  assert.equal(hooks.hooks.PreToolUse[0].hooks[0].timeout, 10);
   assert.equal(hooks.hooks.UserPromptSubmit, undefined);
   assert.equal(hooks.hooks.Stop, undefined);
 });
