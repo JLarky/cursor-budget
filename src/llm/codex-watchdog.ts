@@ -13,7 +13,7 @@ export interface WatchdogDeps {
   /** Run a single pass and return (tests / `--once`). */
   once?: boolean;
   /** Injectable decision source; defaults to runGuard("codex"). */
-  decide?: () => Pick<GuardDecision, "allow" | "evaluation" | "sessionId"> & {
+  decide?: () => Pick<GuardDecision, "allow" | "evaluation" | "sessionId" | "now"> & {
     config: Config;
   };
   /** Injectable process list; returns [pid, command line]. */
@@ -64,7 +64,7 @@ async function watchdogPass(
   // Config must be strict here: an unreadable config is exactly when a guard
   // must not silently stop guarding. Under failClosed that means treat every
   // codex process as over-budget; with failClosed off, sit this pass out.
-  let decision: Pick<GuardDecision, "allow" | "evaluation" | "sessionId"> & {
+  let decision: Pick<GuardDecision, "allow" | "evaluation" | "sessionId" | "now"> & {
     config: Config;
   };
   try {

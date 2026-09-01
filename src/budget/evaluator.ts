@@ -207,16 +207,19 @@ export function formatResetCountdown(resetsAt: string, now: Date): string {
   return formatResetRemaining(parseResetRemaining(resetsAt, now));
 }
 
+function windowLineStatus(m: WindowMeasurement): string {
+  if (m.blockAtPercent === null) return "monitor-only";
+  if (!Number.isFinite(m.usedPct)) return "usage unknown";
+  return `block at ${formatPercent(m.blockAtPercent)}`;
+}
+
 export function formatWindowLine(m: WindowMeasurement, now: Date = new Date()): string {
   const reset = m.resetsAt ? ` — resets ${m.resetsAt}${formatResetCountdown(m.resetsAt, now)}` : "";
+  const status = windowLineStatus(m);
   if (!Number.isFinite(m.usedPct)) {
-    const status = m.blockAtPercent === null ? "monitor-only" : "usage unknown";
     return `${m.label}: unavailable (${status})${reset}`;
   }
-  const used = formatPercent(m.usedPct);
-  const status =
-    m.blockAtPercent === null ? "monitor-only" : `block at ${formatPercent(m.blockAtPercent)}`;
-  return `${m.label}: ${used} (${status})${reset}`;
+  return `${m.label}: ${formatPercent(m.usedPct)} (${status})${reset}`;
 }
 
 export function formatAge(ageMs: number): string {
