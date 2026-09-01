@@ -1,0 +1,378 @@
+#!/usr/bin/env bash
+# Drive the llm-budget CLI from this checkout in an isolated $HOME.
+# Invocation examples live in SKILL.md. Do not call the llm-budget on PATH.
+set -euo pipefail
+
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RUN_DIR="$SKILL_DIR/.run"
+STATE_FILE="$RUN_DIR/current.env"
+REAL_HOME="${HOME}"
+
+find_repo_root() {
+  local d
+  d="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  while [[ "$d" != "/" ]]; do
+    if [[ -f "$d/package.json" ]] && grep -q '"name": "llm-budget"' "$d/package.json"; then
+      printf '%s\n' "$d"
+      return 0
+    fi
+    d="$(dirname "$d")"
+  done
+  echo "error: could not find the llm-budget repo root (package.json name llm-budget)" >&2
+  exit 1
+}
+
+REPO_ROOT="$(find_repo_root)"
+CLI_JS="$REPO_ROOT/dist/llm/cli.js"
+
+usage() {
+  cat <<'EOF'
+verify-llm-budget. Isolated HOME driver for the llm-budget CLI
+
+  launch              Build dist/llm/cli.js and create an isolated $HOME
+  doctor              Read-only check that this run is safe to drive
+  cli -- <args>       Run this checkout's CLI with the isolated HOME
+  hook <scope> <event> [session-id]
+                      Pipe one hook payload (claude|codex|cursor)
+  capture <stem> -- <args>
+                      Run cli and write stdout/stderr/exit under evidence/<run-id>/<stem>
+  snapshot-home <stem>
+                      Copy config and hook files from isolated HOME into evidence
+  home-file <relpath> Print a file from isolated HOME
+  cleanup             Delete the isolated HOME. Evidence stays.
+
+Never pass a real home. Never run watchdog. Never use `llm-budget` from PATH.
+EOF
+}
+
+require_state() {
+  if [[ ! -f "$STATE_FILE" ]]; then
+    echo "error: no verification run. Start with: $0 launch" >&2
+    exit 1
+  fi
+  # shellcheck disable=SC1090
+  source "$STATE_FILE"
+  if [[ -z "${VERIFY_HOME:-}" || -z "${RUN_ID:-}" || -z "${EVIDENCE_DIR:-}" ]]; then
+    echo "error: $STATE_FILE is incomplete" >&2
+    exit 1
+  fi
+}
+
+assert_isolated_home() {
+  local home="$1"
+  if [[ -z "$home" ]]; then
+    echo "error: isolated HOME is empty" >&2
+    exit 1
+  fi
+  case "$home" in
+    /tmp/llm-budget-verify-*) ;;
+    *)
+      echo "error: HOME is not an isolated verification dir: $home" >&2
+      echo "expected a directory under /tmp/llm-budget-verify-" >&2
+      exit 1
+      ;;
+  esac
+  if [[ "$home" == "$REAL_HOME" ]]; then
+    echo "error: refusing to drive the real HOME ($REAL_HOME)" >&2
+    exit 1
+  fi
+}
+
+cli_env() {
+  # Credential env vars leak the user's real accounts into an isolated HOME.
+  env -u CLAUDE_HOME -u CODEX_HOME -u CURSOR_ACCESS_TOKEN \
+    HOME="$VERIFY_HOME" \
+    node "$CLI_JS" "$@"
+}
+
+run_cli() {
+  require_state
+  assert_isolated_home "$VERIFY_HOME"
+  if [[ ! -f "$CLI_JS" ]]; then
+    echo "error: missing $CLI_JS. Run: $0 launch" >&2
+    exit 1
+  fi
+  cli_env "$@"
+}
+
+cmd_launch() {
+  if [[ -f "$STATE_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$STATE_FILE"
+    if [[ -n "${VERIFY_HOME:-}" && -d "${VERIFY_HOME}" ]]; then
+      echo "error: a run is already live at $VERIFY_HOME" >&2
+      echo "tear it down first: $0 cleanup" >&2
+      exit 1
+    fi
+  fi
+
+  if [[ ! -d "$REPO_ROOT/node_modules" ]]; then
+    (cd "$REPO_ROOT" && npm install)
+  fi
+  (cd "$REPO_ROOT" && npm run build)
+
+  if [[ ! -f "$CLI_JS" ]]; then
+    echo "error: build did not produce $CLI_JS" >&2
+    exit 1
+  fi
+
+  local node_ver
+  node_ver="$(node -v)"
+  mkdir -p "$RUN_DIR"
+  local home
+  home="$(mktemp -d /tmp/llm-budget-verify-XXXXXX)"
+  local run_id
+  run_id="$(basename "$home")"
+  local evidence
+  evidence="$SKILL_DIR/evidence/$run_id"
+  mkdir -p "$evidence"
+
+  cat >"$STATE_FILE" <<EOF
+RUN_ID=$run_id
+VERIFY_HOME=$home
+EVIDENCE_DIR=$evidence
+REPO_ROOT=$REPO_ROOT
+CLI_JS=$CLI_JS
+NODE_VERSION=$node_ver
+LAUNCHED_AT=$(date -Iseconds)
+EOF
+
+  echo "launched"
+  echo "RUN_ID=$run_id"
+  echo "VERIFY_HOME=$home"
+  echo "EVIDENCE_DIR=$evidence"
+  echo "CLI_JS=$CLI_JS"
+  echo "NODE_VERSION=$node_ver"
+}
+
+cmd_doctor() {
+  require_state
+  assert_isolated_home "$VERIFY_HOME"
+  local failed=0
+  local real_home
+  real_home="$(cd && pwd)"
+
+  if [[ ! -d "$VERIFY_HOME" ]]; then
+    echo "FAIL isolated HOME missing: $VERIFY_HOME"
+    failed=1
+  else
+    echo "OK isolated HOME $VERIFY_HOME"
+  fi
+
+  if [[ "$VERIFY_HOME" == "$real_home" || "$VERIFY_HOME" == "$REAL_HOME" ]]; then
+    echo "FAIL HOME equals the real user home"
+    failed=1
+  else
+    echo "OK HOME is not the real user home ($REAL_HOME)"
+  fi
+
+  if [[ ! -f "$CLI_JS" ]]; then
+    echo "FAIL CLI missing: $CLI_JS"
+    failed=1
+  else
+    echo "OK CLI $CLI_JS"
+  fi
+
+  local node_ver major minor
+  node_ver="$(node -v | sed 's/^v//')"
+  major="${node_ver%%.*}"
+  minor="${node_ver#*.}"
+  minor="${minor%%.*}"
+  if [[ "$major" -gt 22 || ( "$major" -eq 22 && "$minor" -ge 5 ) ]]; then
+    echo "OK node v$node_ver (>= 22.5)"
+  else
+    echo "FAIL node v$node_ver (need >= 22.5 for node:sqlite)"
+    failed=1
+  fi
+
+  if command -v llm-budget >/dev/null 2>&1; then
+    echo "NOTE llm-budget is on PATH at $(command -v llm-budget). This helper ignores it."
+  fi
+
+  local help_out help_err help_code
+  help_out="$(mktemp)"
+  help_err="$(mktemp)"
+  set +e
+  cli_env help >"$help_out" 2>"$help_err"
+  help_code=$?
+  set -e
+  if [[ "$help_code" -ne 0 ]]; then
+    echo "FAIL help exit $help_code"
+    echo "----- stdout -----"
+    cat "$help_out"
+    echo "----- stderr -----"
+    cat "$help_err"
+    failed=1
+  else
+    echo "OK help exit 0"
+  fi
+
+  if grep -q "llm-budget claude help" "$help_out" \
+    && grep -q "llm-budget codex help" "$help_out" \
+    && grep -q "llm-budget cursor help" "$help_out"; then
+    echo "OK help lists claude, codex, and cursor scopes"
+  else
+    echo "FAIL help is missing a scope"
+    echo "----- stdout -----"
+    cat "$help_out"
+    failed=1
+  fi
+
+  if grep -q "llm-budget install" "$help_out"; then
+    echo "OK help lists llm-budget install"
+  else
+    echo "FAIL help does not list llm-budget install"
+    failed=1
+  fi
+
+  if [[ -e "$VERIFY_HOME/.config" || -e "$VERIFY_HOME/.claude" || -e "$VERIFY_HOME/.codex" || -e "$VERIFY_HOME/.cursor" ]]; then
+    echo "NOTE isolated HOME already has files from this run (ok after status/install)"
+  else
+    echo "OK isolated HOME is still empty"
+  fi
+
+  rm -f "$help_out" "$help_err"
+
+  if [[ "$failed" -ne 0 ]]; then
+    echo "doctor: this instance is not safe to drive"
+    exit 1
+  fi
+  echo "doctor: ok"
+}
+
+cmd_capture() {
+  require_state
+  local stem="${1:-}"
+  shift || true
+  if [[ -z "$stem" || "${1:-}" != "--" ]]; then
+    echo "usage: $0 capture <stem> -- <cli args>" >&2
+    exit 1
+  fi
+  shift
+  local dest="$EVIDENCE_DIR/$stem"
+  mkdir -p "$dest"
+  local cmd_line="llm-budget $*"
+  printf '%s\n' "$cmd_line" >"$dest/cmd.txt"
+  printf '%s\n' "$VERIFY_HOME" >"$dest/home.txt"
+  set +e
+  run_cli "$@" >"$dest/stdout.txt" 2>"$dest/stderr.txt"
+  local code=$?
+  set -e
+  printf '%s\n' "$code" >"$dest/exit.txt"
+  echo "captured $dest (exit $code)"
+  return 0
+}
+
+cmd_snapshot_home() {
+  require_state
+  local stem="${1:-home}"
+  local dest="$EVIDENCE_DIR/$stem"
+  mkdir -p "$dest"
+  local rel
+  for rel in \
+    .config/llm-budget/config.jsonc \
+    .claude/settings.json \
+    .codex/hooks.json \
+    .codex/config.toml \
+    .cursor/hooks.json \
+    .cursor/hooks/llm-budget \
+    .local/share/llm-budget/bin/claude-hook \
+    .local/share/llm-budget/bin/codex-hook
+  do
+    if [[ -e "$VERIFY_HOME/$rel" ]]; then
+      mkdir -p "$dest/$(dirname "$rel")"
+      cp -a "$VERIFY_HOME/$rel" "$dest/$rel"
+    fi
+  done
+  echo "snapshotted isolated HOME into $dest"
+}
+
+cmd_home_file() {
+  require_state
+  local rel="${1:-}"
+  if [[ -z "$rel" ]]; then
+    echo "usage: $0 home-file <relative path under isolated HOME>" >&2
+    exit 1
+  fi
+  if [[ "$rel" == /* || "$rel" == *..* ]]; then
+    echo "error: path must be relative and stay inside isolated HOME" >&2
+    exit 1
+  fi
+  local path="$VERIFY_HOME/$rel"
+  if [[ ! -e "$path" ]]; then
+    echo "error: missing $path" >&2
+    exit 1
+  fi
+  cat "$path"
+}
+
+cmd_hook() {
+  local scope="${1:-}"
+  local event="${2:-}"
+  local session="${3:-verify-sess}"
+  if [[ -z "$scope" || -z "$event" ]]; then
+    echo "usage: $0 hook <claude|codex|cursor> <event-name> [session-id]" >&2
+    exit 1
+  fi
+  local json
+  case "$scope" in
+    claude|codex)
+      json="$(printf '{"hook_event_name":"%s","session_id":"%s"}' "$event" "$session")"
+      printf '%s' "$json" | run_cli "$scope" hook
+      ;;
+    cursor)
+      json="$(printf '{"hook_event_name":"%s","conversation_id":"%s"}' "$event" "$session")"
+      printf '%s' "$json" | run_cli cursor hook
+      ;;
+    *)
+      echo "error: scope must be claude, codex, or cursor" >&2
+      exit 1
+      ;;
+  esac
+}
+
+cmd_cleanup() {
+  if [[ ! -f "$STATE_FILE" ]]; then
+    echo "cleanup: no current run"
+    return 0
+  fi
+  # shellcheck disable=SC1090
+  source "$STATE_FILE"
+  if [[ -n "${VERIFY_HOME:-}" ]]; then
+    assert_isolated_home "$VERIFY_HOME"
+    if [[ -d "$VERIFY_HOME" ]]; then
+      rm -rf "$VERIFY_HOME"
+      echo "removed $VERIFY_HOME"
+    else
+      echo "isolated HOME already gone: $VERIFY_HOME"
+    fi
+  fi
+  rm -f "$STATE_FILE"
+  echo "cleanup: done (evidence kept${EVIDENCE_DIR:+ at $EVIDENCE_DIR})"
+}
+
+main() {
+  local cmd="${1:-}"
+  shift || true
+  case "$cmd" in
+    ""|-h|--help|help) usage ;;
+    launch) cmd_launch "$@" ;;
+    doctor) cmd_doctor "$@" ;;
+    cli)
+      if [[ "${1:-}" == "--" ]]; then shift; fi
+      run_cli "$@"
+      ;;
+    hook) cmd_hook "$@" ;;
+    capture) cmd_capture "$@" ;;
+    snapshot-home) cmd_snapshot_home "$@" ;;
+    home-file) cmd_home_file "$@" ;;
+    cleanup) cmd_cleanup "$@" ;;
+    *)
+      echo "unknown command: $cmd" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"
