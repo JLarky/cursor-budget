@@ -33,3 +33,24 @@ export function codexHookWrapperPath(home = homedir()): string {
 export function codexHookStatePath(home = homedir()): string {
   return join(dataDir(home), "codex-hooks-state.json");
 }
+
+/** `GROK_HOME` overrides the whole directory, not just the leaf under `home`. */
+export function grokHome(home = homedir()): string {
+  return process.env.GROK_HOME || join(home, ".grok");
+}
+
+export function grokHooksFilePath(home = homedir()): string {
+  return join(grokHome(home), "hooks", "llm-budget.json");
+}
+
+export function grokHookWrapperPath(home = homedir()): string {
+  return join(dataDir(home), "bin", "grok-hook");
+}
+
+export function grokAuthPath(home = homedir()): string {
+  return join(grokHome(home), "auth.json");
+}
+
+export function grokAuthLockPath(home = homedir()): string {
+  return join(grokHome(home), "auth.json.lock");
+}

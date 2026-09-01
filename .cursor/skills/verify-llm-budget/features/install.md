@@ -4,12 +4,13 @@ Install registers llm-budget into each agent's hook file so the next prompt or t
 
 ## Sub-features
 
-- `install-all` registers Claude Code, Codex, and Cursor Agent in one command.
+- `install-all` registers Claude Code, Codex, Cursor Agent, and Grok CLI in one command.
 - `install-claude` writes `~/.claude/settings.json` UserPromptSubmit and PreToolUse entries.
 - `install-codex` writes `~/.codex/hooks.json` UserPromptSubmit and PreToolUse entries.
 - `install-cursor` writes `~/.cursor/hooks.json` plus the `~/.cursor/hooks/llm-budget` wrapper.
+- `install-grok` writes `~/.grok/hooks/llm-budget.json` plus the `grok-hook` wrapper under `~/.local/share/llm-budget/bin/`.
 - `install-status` then reports `Hooks: installed` per agent.
-- `uninstall-claude` / `uninstall-codex` / `uninstall-cursor` remove the matching entries.
+- `uninstall-claude` / `uninstall-codex` / `uninstall-cursor` / `uninstall-grok` remove the matching entries.
 
 ## How to get to it (user POV)
 
@@ -18,32 +19,36 @@ Install registers llm-budget into each agent's hook file so the next prompt or t
 - Run `llm-budget codex install` or `llm-budget codex uninstall`.
 - Run `llm-budget cursor install` or `llm-budget cursor uninstall`.
 - Run `llm-budget cursor uninstall --purge-data` to also clear Cursor rows in the shared store.
+- Run `llm-budget grok install` or `llm-budget grok uninstall`.
 
 ## Driving it with verify-llm-budget
 
 Preconditions:
 
 - `verify-llm-budget doctor` prints `doctor: ok`.
-- Isolated HOME has no `.claude/settings.json`, `.codex/hooks.json`, or `.cursor/hooks.json`.
-- Confirm with `verify-llm-budget capture install/before-status -- status`. stdout contains `Hooks: not installed — run llm-budget claude install`, `Hooks: not installed — run llm-budget codex install`, and `Hooks: not installed — run llm-budget cursor install`.
+- Isolated HOME has no `.claude/settings.json`, `.codex/hooks.json`, `.cursor/hooks.json`, or `.grok/hooks/llm-budget.json`.
+- Confirm with `verify-llm-budget capture install/before-status -- status`. stdout contains `Hooks: not installed — run llm-budget claude install`, `Hooks: not installed — run llm-budget codex install`, `Hooks: not installed — run llm-budget cursor install`, and `Hooks: not installed — run llm-budget grok install`.
 
-- **Install all agents.** Run `verify-llm-budget capture install/all -- install`. Exit `0`. stdout contains `Installed llm-budget Claude Code hooks`, `Installed llm-budget Codex native hooks`, and `Installed llm-budget Cursor Agent hooks`. Each section prints a path under isolated HOME.
+- **Install all agents.** Run `verify-llm-budget capture install/all -- install`. Exit `0`. stdout contains `Installed llm-budget Claude Code hooks`, `Installed llm-budget Codex native hooks`, `Installed llm-budget Cursor Agent hooks`, and `Installed llm-budget Grok CLI hooks`. Each section prints a path under isolated HOME.
 - **Config created.** Run `verify-llm-budget home-file .config/llm-budget/config.jsonc`. The file exists and contains `"failClosed": true`.
 - **Claude settings.** Run `verify-llm-budget home-file .claude/settings.json`. JSON `hooks.UserPromptSubmit` and `hooks.PreToolUse` each include a command pointing at `claude-hook` under isolated HOME. PreToolUse has `"matcher": "*"`.
 - **Codex hooks.** Run `verify-llm-budget home-file .codex/hooks.json`. JSON `hooks.UserPromptSubmit` and `hooks.PreToolUse` each include a command pointing at `codex-hook` under isolated HOME.
 - **Cursor hooks.** Run `verify-llm-budget home-file .cursor/hooks.json`. Every registered event has a command containing `llm-budget` and `"failClosed": true`. Wrapper file `.cursor/hooks/llm-budget` exists and execs `cursor hook`.
-- **Status after install.** Run `verify-llm-budget capture install/after-status -- status`. Exit `0`. Claude Code, Codex, and Cursor Agent each show `Hooks: installed`.
-- **Claude-only uninstall.** Run `verify-llm-budget capture install/claude-uninstall -- claude uninstall`. Exit `0`. stdout contains `Removed llm-budget entries from` the isolated settings path. Combined status then shows Claude hooks not installed while Cursor remains installed.
+- **Grok hooks.** Run `verify-llm-budget home-file .grok/hooks/llm-budget.json`. JSON `hooks.PreToolUse[0].command` points at the `grok-hook` wrapper under isolated HOME and `hooks.PreToolUse[0].timeout` is `10`. The wrapper file exists, is executable, and contains `"decision":"deny"` (the no-Node fallback deny JSON) — grep it with `home-file .local/share/llm-budget/bin/grok-hook`.
+- **Status after install.** Run `verify-llm-budget capture install/after-status -- status`. Exit `0`. Claude Code, Codex, Cursor Agent, and Grok CLI each show `Hooks: installed`.
+- **Claude-only uninstall.** Run `verify-llm-budget capture install/claude-uninstall -- claude uninstall`. Exit `0`. stdout contains `Removed llm-budget entries from` the isolated settings path. Combined status then shows Claude hooks not installed while Cursor and Grok remain installed.
 - **Cursor uninstall.** Run `verify-llm-budget capture install/cursor-uninstall -- cursor uninstall`. Exit `0`. stdout contains `Removed llm-budget Cursor Agent hook entries and wrapper.` and `Kept Cursor Agent data in the shared store.`
-- **Proof.** Run `verify-llm-budget snapshot-home install/home` after the install-all step (before uninstall). Evidence includes the three hook files and both wrappers. Keep `install/all/stdout.txt` and `install/after-status/stdout.txt`.
+- **Grok uninstall.** Run `verify-llm-budget capture install/grok-uninstall -- grok uninstall`. Exit `0`. stdout contains `Removed llm-budget Grok CLI hooks from` the isolated hooks-file path. Combined status then shows Grok hooks not installed while the wrapper file itself is untouched.
+- **Proof.** Run `verify-llm-budget snapshot-home install/home` after the install-all step (before uninstall). Evidence includes all four hook files and all three wrappers. Keep `install/all/stdout.txt` and `install/after-status/stdout.txt`.
 
 To prove a per-agent entry point, start from a fresh launch and run that install command only. Do not treat `llm-budget install` as coverage of `llm-budget claude install`.
 
 ## Gotchas
 
-- `llm-budget install` without isolated HOME writes the user's real Claude, Codex, and Cursor hook files. Doctor exists so you do not do that.
+- `llm-budget install` without isolated HOME writes the user's real Claude, Codex, Cursor, and Grok hook files. Doctor exists so you do not do that.
 - Codex install may spawn `codex app-server` for up to 5 seconds to set hook trust. If Codex is not installed, stdout still reports install and adds `Codex hook trust could not be established automatically`. That is success for this fixture.
-- Uninstall of Claude leaves the wrapper file in place. Absence of settings entries is the proof, not absence of the wrapper.
-- `cursor uninstall --purge-data` resets Cursor config keys and sqlite rows. It does not remove Claude or Codex config. Only use it when the recipe says so.
+- Uninstall of Claude and Grok leaves the wrapper file in place. Absence of the hooks file/entries is the proof, not absence of the wrapper.
+- `cursor uninstall --purge-data` resets Cursor config keys and sqlite rows. It does not remove Claude, Codex, or Grok config. Only use it when the recipe says so.
 - Cursor `hooks.json` `failClosed: true` is Cursor's process-crash policy for this hook. It is not the same field as `enforcement.failClosed` in config.jsonc.
-- Re-running install is idempotent. A second install still exits 0 and keeps one llm-budget entry per event. Assert counts if you need to prove merge behavior.
+- Grok's own hook platform fails open on a crashed or timed-out hook; the wrapper's stdout-inspecting deny envelope is what makes `llm-budget grok` fail closed instead. Do not treat the wrapper's exec-Node behavior as equivalent to Claude/Codex/Cursor's wrappers.
+- Re-running install is idempotent. A second install still exits 0 and keeps one llm-budget entry per event (or, for Grok, one owned hooks file with the same bytes).

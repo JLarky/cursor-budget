@@ -33,7 +33,7 @@ verify-llm-budget. Isolated HOME driver for the llm-budget CLI
   doctor              Read-only check that this run is safe to drive
   cli -- <args>       Run this checkout's CLI with the isolated HOME
   hook <scope> <event> [session-id]
-                      Pipe one hook payload (claude|codex|cursor)
+                      Pipe one hook payload (claude|codex|cursor|grok)
   capture <stem> -- <args>
                       Run cli and write stdout/stderr/exit under evidence/<run-id>/<stem>
   snapshot-home <stem>
@@ -80,7 +80,7 @@ assert_isolated_home() {
 
 cli_env() {
   # Credential env vars leak the user's real accounts into an isolated HOME.
-  env -u CLAUDE_HOME -u CODEX_HOME -u CURSOR_ACCESS_TOKEN \
+  env -u CLAUDE_HOME -u CODEX_HOME -u CURSOR_ACCESS_TOKEN -u GROK_HOME \
     HOME="$VERIFY_HOME" \
     node "$CLI_JS" "$@"
 }
@@ -209,14 +209,30 @@ cmd_doctor() {
 
   if grep -q "llm-budget claude help" "$help_out" \
     && grep -q "llm-budget codex help" "$help_out" \
-    && grep -q "llm-budget cursor help" "$help_out"; then
-    echo "OK help lists claude, codex, and cursor scopes"
+    && grep -q "llm-budget cursor help" "$help_out" \
+    && grep -q "llm-budget grok help" "$help_out"; then
+    echo "OK help lists claude, codex, cursor, and grok scopes"
   else
     echo "FAIL help is missing a scope"
     echo "----- stdout -----"
     cat "$help_out"
     failed=1
   fi
+
+  local grok_help_out grok_help_code
+  grok_help_out="$(mktemp)"
+  set +e
+  cli_env grok help >"$grok_help_out" 2>&1
+  grok_help_code=$?
+  set -e
+  if [[ "$grok_help_code" -ne 0 ]]; then
+    echo "FAIL llm-budget grok help exit $grok_help_code"
+    cat "$grok_help_out"
+    failed=1
+  else
+    echo "OK llm-budget grok help exit 0"
+  fi
+  rm -f "$grok_help_out"
 
   if grep -q "llm-budget install" "$help_out"; then
     echo "OK help lists llm-budget install"
@@ -225,7 +241,7 @@ cmd_doctor() {
     failed=1
   fi
 
-  if [[ -e "$VERIFY_HOME/.config" || -e "$VERIFY_HOME/.claude" || -e "$VERIFY_HOME/.codex" || -e "$VERIFY_HOME/.cursor" ]]; then
+  if [[ -e "$VERIFY_HOME/.config" || -e "$VERIFY_HOME/.claude" || -e "$VERIFY_HOME/.codex" || -e "$VERIFY_HOME/.cursor" || -e "$VERIFY_HOME/.grok" ]]; then
     echo "NOTE isolated HOME already has files from this run (ok after status/install)"
   else
     echo "OK isolated HOME is still empty"
@@ -276,8 +292,10 @@ cmd_snapshot_home() {
     .codex/config.toml \
     .cursor/hooks.json \
     .cursor/hooks/llm-budget \
+    .grok/hooks/llm-budget.json \
     .local/share/llm-budget/bin/claude-hook \
-    .local/share/llm-budget/bin/codex-hook
+    .local/share/llm-budget/bin/codex-hook \
+    .local/share/llm-budget/bin/grok-hook
   do
     if [[ -e "$VERIFY_HOME/$rel" ]]; then
       mkdir -p "$dest/$(dirname "$rel")"
@@ -311,7 +329,7 @@ cmd_hook() {
   local event="${2:-}"
   local session="${3:-verify-sess}"
   if [[ -z "$scope" || -z "$event" ]]; then
-    echo "usage: $0 hook <claude|codex|cursor> <event-name> [session-id]" >&2
+    echo "usage: $0 hook <claude|codex|cursor|grok> <event-name> [session-id]" >&2
     exit 1
   fi
   local json
@@ -324,8 +342,12 @@ cmd_hook() {
       json="$(printf '{"hook_event_name":"%s","conversation_id":"%s"}' "$event" "$session")"
       printf '%s' "$json" | run_cli cursor hook
       ;;
+    grok)
+      json="$(printf '{"hookEventName":"%s","sessionId":"%s"}' "$event" "$session")"
+      printf '%s' "$json" | run_cli grok hook
+      ;;
     *)
-      echo "error: scope must be claude, codex, or cursor" >&2
+      echo "error: scope must be claude, codex, cursor, or grok" >&2
       exit 1
       ;;
   esac

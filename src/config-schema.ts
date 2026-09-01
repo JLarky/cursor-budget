@@ -52,6 +52,12 @@ export const CursorSchema = v.strictObject({
   excludeConversationIds: v.optional(v.array(v.string())),
 });
 
+export const GrokSchema = v.strictObject({
+  enabled: v.optional(v.boolean()),
+  windows: v.optional(v.strictObject({ weekly: v.optional(WindowSchema) })),
+  excludeSessionIds: v.optional(v.array(v.pipe(v.string(), v.trim(), v.minLength(1)))),
+});
+
 /** One schema for the shared config.jsonc — every agent key is typed. */
 export const ConfigFileSchema = v.strictObject({
   $schema: v.optional(v.string()),
@@ -59,6 +65,7 @@ export const ConfigFileSchema = v.strictObject({
   claude: v.optional(ClaudeSchema),
   codex: v.optional(CodexSchema),
   cursor: v.optional(CursorSchema),
+  grok: v.optional(GrokSchema),
   enforcement: v.optional(
     v.strictObject({
       failClosed: v.optional(v.boolean()),

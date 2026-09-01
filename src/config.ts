@@ -64,10 +64,25 @@ export interface CursorConfig {
   excludeConversationIds: string[];
 }
 
+export interface GrokConfig {
+  enabled: boolean;
+  windows: {
+    /**
+     * xAI's weekly credit pool. Ships enforced at 80 (this product is a
+     * guard, not a monitor) — plans that report no percent gate `unmetered`
+     * usage the same as any other unknown usage until set to `null`.
+     */
+    weekly: WindowConfig;
+  };
+  /** Grok session ids that bypass the Grok gate only. */
+  excludeSessionIds: string[];
+}
+
 export interface Config {
   claude: ClaudeConfig;
   codex: CodexConfig;
   cursor: CursorConfig;
+  grok: GrokConfig;
   enforcement: {
     /**
      * When usage cannot be determined (API unreachable, auth expired, stale
@@ -107,6 +122,13 @@ export const DEFAULT_CONFIG: Config = {
     cacheTtlMs: 90_000,
     warnings: [0.5, 0.75, 0.9],
     excludeConversationIds: [],
+  },
+  grok: {
+    enabled: true,
+    windows: {
+      weekly: { blockAtPercent: 80 },
+    },
+    excludeSessionIds: [],
   },
   enforcement: { failClosed: true },
   excludeSessionIds: [],
@@ -181,6 +203,13 @@ export function parseConfig(raw: JsonValue | Config): Config {
       warnings: parsed.cursor?.warnings ?? DEFAULT_CONFIG.cursor.warnings,
       excludeConversationIds: parsed.cursor?.excludeConversationIds ?? [],
     },
+    grok: {
+      enabled: parsed.grok?.enabled ?? DEFAULT_CONFIG.grok.enabled,
+      windows: {
+        weekly: resolveWindow(parsed.grok?.windows?.weekly, DEFAULT_CONFIG.grok.windows.weekly),
+      },
+      excludeSessionIds: parsed.grok?.excludeSessionIds ?? [],
+    },
     enforcement: {
       failClosed: parsed.enforcement?.failClosed ?? DEFAULT_CONFIG.enforcement.failClosed,
     },
@@ -198,6 +227,7 @@ function blockAt(w: WindowConfig): string {
 export function renderConfigFile(c: Config): string {
   const warnings = c.cursor.warnings.map((w) => `${w}`).join(", ");
   const cursorExcept = c.cursor.excludeConversationIds.map((id) => JSON.stringify(id)).join(", ");
+  const grokExcept = c.grok.excludeSessionIds.map((id) => JSON.stringify(id)).join(", ");
   const llmExcept = c.excludeSessionIds.map((id) => JSON.stringify(id)).join(", ");
   return `// llm-budget configuration — JSONC, so comments and trailing commas are fine.
 //
@@ -218,6 +248,9 @@ export function renderConfigFile(c: Config): string {
 //   cursor.windows.cursorModels   Dashboard "Cursor Models" (auto) meter.
 //   cursor.windows.otherModels    Dashboard "Other Models" (api) meter.
 //   cursor.windows.total          Combined spend meter, monitor-only by default.
+//   grok.windows.weekly           xAI's weekly credit pool. Enforced at 80 by
+//                                 default; plans that report no percent are
+//                                 "unmetered" usage, not 0%.
 {
   "claude": {
     // Gate Claude Code sessions at all?
@@ -255,6 +288,15 @@ export function renderConfigFile(c: Config): string {
     "warnings": [${warnings}],
     // Cursor Agent conversation ids that bypass every Cursor gate.
     "excludeConversationIds": [${cursorExcept}]
+  },
+  "grok": {
+    // Gate Grok CLI sessions at all?
+    "enabled": ${c.grok.enabled},
+    "windows": {
+      "weekly": { "blockAtPercent": ${blockAt(c.grok.windows.weekly)} }
+    },
+    // Grok session ids that bypass the Grok gate only.
+    "excludeSessionIds": [${grokExcept}]
   },
   "enforcement": {
     // When usage cannot be determined (API down), block instead of allow.
