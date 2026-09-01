@@ -90,6 +90,8 @@ export function installGrokHook(home = homedir()): string {
   writeFileSync(wrapper, wrapperScript(cli));
   chmodSync(wrapper, 0o755);
 
+  // Grok globs ~/.grok/hooks/*.json and only runs nested `{ type: "command", command }`.
+  // A Cursor-shaped `{ command, timeout }` on the matcher group is ignored, so the tool proceeds.
   const hooks = {
     hooks: {
       PreToolUse: [
