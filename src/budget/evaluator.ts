@@ -1,5 +1,10 @@
 import type { WindowId } from "./windows.js";
 
+export type WindowMeter =
+  | { kind: "percent" }
+  | { kind: "unmetered" }
+  | { kind: "unavailable" };
+
 /**
  * One agent's window shape, ready to evaluate: `blockAtPercent === null`
  * means monitor-only (measured and displayed, never enforced).
@@ -13,6 +18,7 @@ export interface WindowMeasurement {
   usedDisplay: string;
   denomDisplay: string;
   resetsAt?: string | null;
+  meter?: WindowMeter;
 }
 
 /** Local rolling-hour event count backstop (Cursor Agent only). */
@@ -207,19 +213,39 @@ export function formatResetCountdown(resetsAt: string, now: Date): string {
   return formatResetRemaining(parseResetRemaining(resetsAt, now));
 }
 
+function resolvedMeter(m: WindowMeasurement): WindowMeter {
+  if (m.meter !== undefined) return m.meter;
+  if (Number.isFinite(m.usedPct)) return { kind: "percent" };
+  return { kind: "unavailable" };
+}
+
+function windowLineValue(m: WindowMeasurement): string {
+  const meter = resolvedMeter(m);
+  switch (meter.kind) {
+    case "percent":
+      return formatPercent(m.usedPct);
+    case "unmetered":
+      return "no weekly percent";
+    case "unavailable":
+      return "unavailable";
+    default: {
+      const _exhaustive: never = meter;
+      return _exhaustive;
+    }
+  }
+}
+
 function windowLineStatus(m: WindowMeasurement): string {
   if (m.blockAtPercent === null) return "monitor-only";
+  const meter = resolvedMeter(m);
+  if (meter.kind === "unmetered") return `block at ${formatPercent(m.blockAtPercent)}`;
   if (!Number.isFinite(m.usedPct)) return "usage unknown";
   return `block at ${formatPercent(m.blockAtPercent)}`;
 }
 
 export function formatWindowLine(m: WindowMeasurement, now: Date = new Date()): string {
   const reset = m.resetsAt ? ` — resets ${m.resetsAt}${formatResetCountdown(m.resetsAt, now)}` : "";
-  const status = windowLineStatus(m);
-  if (!Number.isFinite(m.usedPct)) {
-    return `${m.label}: unavailable (${status})${reset}`;
-  }
-  return `${m.label}: ${formatPercent(m.usedPct)} (${status})${reset}`;
+  return `${m.label}: ${windowLineValue(m)} (${windowLineStatus(m)})${reset}`;
 }
 
 export function formatAge(ageMs: number): string {

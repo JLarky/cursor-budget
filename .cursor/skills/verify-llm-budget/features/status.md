@@ -32,7 +32,7 @@ Preconditions:
 - **usage alias.** Run `verify-llm-budget capture status/usage -- usage`. Exit `0`. stdout contains `Cursor Agent:` and `Grok CLI:`.
 - **Uninstalled hooks.** In `status/status` stdout, Claude Code shows `Hooks: not installed — run llm-budget claude install`. Cursor Agent shows `Hooks: not installed — run llm-budget cursor install`. Grok CLI shows `Hooks: not installed — run llm-budget grok install`. Each agent block contains `Override: none`.
 - **Cursor-only status.** Run `verify-llm-budget capture status/cursor -- cursor status`. Exit `0`. stdout starts with `llm-budget`, includes the same Config path, and `Usage: unavailable` (no Cursor auth in isolated HOME). It includes `Credential:` and `Override: none`.
-- **Grok-only status.** Run `verify-llm-budget capture status/grok -- grok status`. Exit `0`. stdout starts with `llm-budget`, includes the same Config path, and `Weekly: unavailable — no Grok auth.json — sign in with the grok CLI (block at 80%)` (no Grok auth in isolated HOME). It includes `Override: none` and `Exceptions: none`.
+- **Grok-only status.** Run `verify-llm-budget capture status/grok -- grok status`. Exit `0`. stdout starts with `llm-budget`, includes the same Config path, and `Weekly: unavailable (usage unknown)` (no Grok auth in isolated HOME). It includes `Override: none` and `Exceptions: none`.
 - **Help.** Run `verify-llm-budget capture status/help -- help`. Exit `0`. stdout contains `llm-budget install`, `llm-budget claude help`, `llm-budget codex help`, `llm-budget cursor help`, `llm-budget grok help`, `llm-budget override `, `llm-budget cursor override `, and `llm-budget grok override `.
 - **Proof.** Keep `status/bare/stdout.txt`, `status/cursor/stdout.txt`, and `status/grok/stdout.txt`. All identify llm-budget and the isolated Config path.
 
@@ -43,4 +43,4 @@ Preconditions:
 - `llm-budget cursor spending` hits the Cursor dashboard with `forceRefresh`. It fails without auth. It is not a status entry point.
 - On macOS, Claude usage can still read the real Keychain even with isolated HOME. Cursor and Codex auth stay under HOME. If Claude windows show real percents during status, you are seeing the user's Keychain, not the fixture.
 - `cursor status` and `grok status` are each a different layout from the combined view. Do not grep combined headings out of either.
-- Grok's `Weekly:` line distinguishes `not metered on this plan` (a plan that never reports a percent) from `unavailable` (auth missing or the request failed). Without Grok auth in isolated HOME, expect `unavailable`, not `not metered`.
+- Grok's `Weekly:` line distinguishes `no weekly percent` (a plan that never reports a percent) from `unavailable` (auth missing or the request failed). Without Grok auth in isolated HOME, expect `unavailable`, not `no weekly percent`.

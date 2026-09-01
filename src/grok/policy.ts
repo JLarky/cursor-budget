@@ -1,5 +1,9 @@
 import * as v from "valibot";
-import { formatResetCountdown } from "../budget/evaluator.js";
+import {
+  formatPercent,
+  formatWindowLine,
+  type WindowMeasurement,
+} from "../budget/evaluator.js";
 import type { GrokConfig } from "../config.js";
 
 /**
@@ -249,18 +253,41 @@ export function renderGrokStatus(state: GateState, hooks: HookInstallState): rea
 }
 
 function renderWeeklyLine(weekly: GrokWeekly, gate: Gate, now: Date): string {
-  const resetSuffix = weekly.resetsAt
-    ? ` — resets ${weekly.resetsAt}${formatResetCountdown(weekly.resetsAt, now)}`
-    : "";
-  const gateSuffix = gate.kind === "armed" ? `block at ${gate.blockAtPercent}%` : "monitor-only";
+  return formatWindowLine(weeklyMeasurement(weekly, gate), now);
+}
+
+function weeklyMeasurement(weekly: GrokWeekly, gate: Gate): WindowMeasurement {
   const reading = weekly.percent;
+  const blockAtPercent = gate.kind === "armed" ? gate.blockAtPercent : null;
+  const base = {
+    windowId: "weekly" as const,
+    label: "Weekly",
+    blockAtPercent,
+    denomDisplay: "xAI weekly credit",
+    resetsAt: weekly.resetsAt,
+  };
   switch (reading.kind) {
     case "measured":
-      return `Weekly: ${reading.percent}% (${gateSuffix})${resetSuffix}`;
+      return {
+        ...base,
+        usedPct: reading.percent,
+        usedDisplay: formatPercent(reading.percent),
+        meter: { kind: "percent" as const },
+      };
     case "unmetered":
-      return `Weekly: not metered on this plan — ${reading.because} (${gateSuffix})${resetSuffix}`;
+      return {
+        ...base,
+        usedPct: Number.NaN,
+        usedDisplay: "no weekly percent",
+        meter: { kind: "unmetered" as const },
+      };
     case "unavailable":
-      return `Weekly: unavailable — ${reading.because} (${gateSuffix})${resetSuffix}`;
+      return {
+        ...base,
+        usedPct: Number.NaN,
+        usedDisplay: "unavailable",
+        meter: { kind: "unavailable" as const },
+      };
     default: {
       const _exhaustive: never = reading;
       return _exhaustive;
