@@ -73,6 +73,32 @@ test("out-of-range creditUsagePercent falls through to the next source instead o
   assert.equal(weekly.percent.kind, "unmetered");
 });
 
+test("resetsAt normalizes xAI's offset timestamp to toISOString like Claude and Codex", () => {
+  const weekly = parseCreditsPayload(
+    {
+      config: {
+        creditUsagePercent: 10,
+        currentPeriod: { end: "2026-09-07T09:10:36.248069+00:00" },
+      },
+    },
+    NOW,
+  );
+  assert.equal(weekly.resetsAt, "2026-09-07T09:10:36.248Z");
+});
+
+test("resetsAt is null when the vendor period end cannot be parsed as a date", () => {
+  const weekly = parseCreditsPayload(
+    {
+      config: {
+        creditUsagePercent: 10,
+        currentPeriod: { end: "not-a-date" },
+      },
+    },
+    NOW,
+  );
+  assert.equal(weekly.resetsAt, null);
+});
+
 test("fetchedAt always reflects the caller's clock", () => {
   const weekly = parseCreditsPayload({ config: { creditUsagePercent: 1 } }, NOW);
   assert.equal(weekly.fetchedAt, NOW.toISOString());
