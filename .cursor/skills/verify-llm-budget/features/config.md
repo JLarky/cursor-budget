@@ -22,10 +22,11 @@ Preconditions:
 - `verify-llm-budget doctor` prints `doctor: ok`.
 - Isolated HOME has no config yet, or only the default file from a prior status in this run.
 
-- **Create default.** Run `verify-llm-budget cli -- status` if the file is missing. Then `verify-llm-budget capture config/print -- config`. Exit `0`. stdout starts with the isolated path `…/.config/llm-budget/config.jsonc`, then the JSONC body. Body includes `"claude"`, `"codex"`, `"cursor"`, and `"failClosed": true`.
-- **Cursor alias.** Run `verify-llm-budget capture config/cursor-print -- cursor config`. Exit `0`. stdout matches `config/print` (same path, same body).
-- **Invalid file, status still prints.** Overwrite isolated `config.jsonc` with `{not-json`. Run `verify-llm-budget capture config/invalid-status -- status`. Exit `0`. stdout contains `Warning: using defaults because config failed to load.` and still lists the three agents.
+- **Create default.** Run `verify-llm-budget cli -- status` if the file is missing. Then `verify-llm-budget capture config/print -- config`. Exit `0`. stdout starts with the isolated path `…/.config/llm-budget/config.jsonc`, then the JSONC body. Body includes `"claude"`, `"codex"`, `"cursor"`, `"grok"`, and `"failClosed": true`.
+- **Cursor alias.** Run `verify-llm-budget capture config/cursor-print -- cursor config`. Exit `0`. stdout matches `config/print` (same path, same body). There is no `grok config` alias — Grok shares this same file but only `llm-budget config` / `llm-budget cursor config` print it.
+- **Invalid file, status still prints.** Overwrite isolated `config.jsonc` with `{not-json`. Run `verify-llm-budget capture config/invalid-status -- status`. Exit `0`. stdout contains `Warning: using defaults because config failed to load.` and still lists all four agents.
 - **Invalid file, hook denies.** Keep the broken file. Run `verify-llm-budget capture config/invalid-hook --` by piping `{"hook_event_name":"preToolUse","conversation_id":"sess-bad-config"}` into `cli -- cursor hook`. stdout JSON has `"permission":"deny"` and `"continue":false`. `user_message` contains `failed to load config` and `Session id: sess-bad-config`.
+- **Invalid file, Grok hook denies too.** Keep the broken file. Pipe `{"hookEventName":"pre_tool_use","sessionId":"sess-bad-config"}` into `verify-llm-budget cli -- grok hook`. Exit `2`. stdout JSON has `"decision":"deny"` and `reason` mentions the config could not be verified.
 - **Proof.** Keep `config/print/stdout.txt` (valid file) and `config/invalid-hook/stdout.txt` (deny). Restore a valid file before driving other features in the same run, or cleanup and launch again.
 
 There is no `llm-budget config set` command. Editing the file is the user write path. Drive that by writing the isolated file, then printing it.

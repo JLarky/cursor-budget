@@ -44,6 +44,8 @@ import { uninstallCommand as cursorUninstallCommand } from "../commands/uninstal
 import { configCommand as cursorConfigCommand } from "../commands/config.js";
 import { spendingCommand as cursorSpendingCommand } from "../commands/spending.js";
 import { handleHook, readStdinJson } from "../hook.js";
+import { grokScope, grokStatusSection } from "../grok/scope.js";
+import { grokDenyJson, installGrokHook } from "../grok/install.js";
 
 async function main(): Promise<void> {
   // Piping into `head` and friends closes stdout early; exit quietly on EPIPE
@@ -106,6 +108,9 @@ async function main(): Promise<void> {
           "\nRun `llm-budget codex help`.",
       );
     }
+    case "grok":
+      await grokScope(rest);
+      return;
     case "watchdog": {
       const once = rest.includes("--once");
       const intervalFlag = rest.indexOf("--interval");
@@ -279,35 +284,38 @@ Optional legacy startup belt:
   llm-budget watchdog [--interval <duration>] [--once]
 `;
 
-const HELP = `llm-budget \u2014 percent-based guards for Claude Code, Codex, and Cursor Agent
+const HELP = `llm-budget \u2014 percent-based guards for Claude Code, Codex, Cursor Agent, and Grok CLI
 
 Usage:
-  llm-budget                    Live status view for all three agents
+  llm-budget                    Live status view for all four agents
   llm-budget status | usage     Same as the bare invocation
-  llm-budget install            Register Claude, Codex, and Cursor guards
+  llm-budget install            Register Claude, Codex, Cursor, and Grok guards
   llm-budget help               This text
 
 Scopes \u2014 every agent supports: install | uninstall | help
   llm-budget claude help        Claude Code \u2014 native hooks in ~/.claude/settings.json
   llm-budget codex help         Codex CLI \u2014 native hooks
   llm-budget cursor help        Cursor Agent \u2014 dashboard API + ~/.cursor/hooks.json
+  llm-budget grok help          Grok CLI \u2014 weekly credit pool + ~/.grok/hooks/llm-budget.json
 
-Claude Code, Codex, and Cursor Agent share ~/.config/llm-budget/config.jsonc.
-Override and exceptions stay per-scope so unblocking one agent does not
-unblock another.
+Claude Code, Codex, Cursor Agent, and Grok CLI share
+~/.config/llm-budget/config.jsonc. Override and exceptions stay per-scope
+so unblocking one agent does not unblock another.
 
   llm-budget override <duration>         Bypass Claude Code + Codex gates
   llm-budget cursor override <duration>  Bypass Cursor Agent gates
+  llm-budget grok override <duration>    Bypass the Grok gate
   llm-budget except add <session-id>
   llm-budget cursor except add <session-id>
+  llm-budget grok except add <session-id>
   llm-budget config
   llm-budget cursor config
 
 How limits work: Claude Code and Codex read percentages from Anthropic
 and OpenAI usage APIs (local login files). Cursor Agent reads the
-Cursor dashboard API. Each gate blocks when usage reaches its
-configured percent. If usage is unknown the guards block by default
-(fail closed).
+Cursor dashboard API. Grok CLI reads xAI's weekly credit-usage API.
+Each gate blocks when usage reaches its configured percent. If usage is
+unknown the guards block by default (fail closed).
 `;
 
 async function statusCommand(home = homedir()): Promise<string> {
@@ -422,6 +430,10 @@ async function statusCommand(home = homedir()): Promise<string> {
     );
   }
 
+  // Grok CLI is a fourth peer of Claude Code, Codex, and Cursor Agent.
+  lines.push("");
+  lines.push(await grokStatusSection(home, now));
+
   return `${lines.join("\n")}\n`;
 }
 
@@ -487,6 +499,7 @@ function installAll(home = homedir()): string {
     installClaudeHooks(home),
     installCodexHooks(home),
     cursorInstallCommand(home),
+    installGrokHook(home),
   ];
   return `${sections.map((section) => section.trimEnd()).join("\n\n")}\n`;
 }
@@ -519,6 +532,13 @@ main().catch((error) => {
   if (argv[0] === "codex" && argv[1] === "hook") {
     const detail = error instanceof CodexHookInputError ? message : `unexpected hook failure: ${message}`;
     process.stderr.write(`llm-budget could not verify your budget:\n  ${detail}\n\nBlocked because enforcement.failClosed is on (the default).\n\nRecover with:\n  llm-budget override 30m\n  llm-budget status\n`);
+    process.exit(2);
+    return;
+  }
+  if (argv[0] === "grok" && argv[1] === "hook") {
+    process.stdout.write(
+      `${grokDenyJson(`llm-budget could not verify the Grok budget: ${message}. Recover with: llm-budget grok override 30m | llm-budget grok status`)}\n`,
+    );
     process.exit(2);
     return;
   }

@@ -6,10 +6,10 @@ This directory is the maintained source for verifying user-facing llm-budget CLI
 
 - Launch with `verify-llm-budget launch` so the CLI runs as `node dist/llm/cli.js` from this checkout.
 - Isolated HOME is `/tmp/llm-budget-verify-*`. Doctor must print `doctor: ok`.
-- `CLAUDE_HOME`, `CODEX_HOME`, and `CURSOR_ACCESS_TOKEN` are unset by the helper. Do not export them for a "more realistic" run.
+- `CLAUDE_HOME`, `CODEX_HOME`, `CURSOR_ACCESS_TOKEN`, and `GROK_HOME` are unset by the helper. Do not export them for a "more realistic" run.
 - Never drive an `llm-budget` binary from PATH.
 - Never run `llm-budget watchdog`.
-- Isolated HOME has no Claude / Codex / Cursor login files. Usage lines will be unknown or unavailable. That is the default fixture.
+- Isolated HOME has no Claude / Codex / Cursor / Grok login files. Usage lines will be unknown, unavailable, or (Grok) armed-and-blocking on unavailable usage. That is the default fixture.
 
 ## Driving conventions
 
@@ -40,8 +40,8 @@ Keep implementation details out of the map. Name only user paths, stable handles
 
 ## Features
 
-- [Status](./status.md) covers the combined live view and Cursor-only status.
-- [Install hooks](./install.md) covers registering and removing Claude Code, Codex, and Cursor Agent hooks.
+- [Status](./status.md) covers the combined live view, Cursor-only status, and Grok-only status.
+- [Install hooks](./install.md) covers registering and removing Claude Code, Codex, Cursor Agent, and Grok CLI hooks.
 - [Config](./config.md) covers printing and rejecting the shared config.jsonc.
 - [Override and exceptions](./escape-hatches.md) covers temporary bypass and per-session exceptions.
 - [Fail-closed hooks](./fail-closed-hooks.md) covers hook stdin blocking when usage cannot be determined.

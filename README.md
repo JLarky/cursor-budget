@@ -1,8 +1,8 @@
 # llm-budget
 
-Usage guards for **Claude Code**, **Codex**, and **Cursor Agent** — each stops
-its agent before you burn through your quota, using real reported usage as the
-source of truth, never a local estimate.
+Usage guards for **Claude Code**, **Codex**, **Cursor Agent**, and **Grok
+CLI** — each stops its agent before you burn through your quota, using real
+reported usage as the source of truth, never a local estimate.
 
 One binary, one scope per agent:
 
@@ -10,6 +10,7 @@ One binary, one scope per agent:
 llm-budget claude install  # Claude Code   — Anthropic usage API + native hooks
 llm-budget codex install   # Codex         — OpenAI usage API + native hooks
 llm-budget cursor install  # Cursor Agent  — dashboard API + ~/.cursor/hooks.json
+llm-budget grok install    # Grok CLI      — xAI weekly credit API + ~/.grok/hooks/llm-budget.json
 ```
 
 **Repository:** https://github.com/JLarky/llm-budget
@@ -21,7 +22,8 @@ don't see the real prompt payload — system prompts, file context, cache reads
 and reasoning tokens are all invisible — so any local estimate is guessing at
 the majority of the bill. Every guard here reads numbers the provider actually
 reports: Anthropic's OAuth usage API for `claude`, OpenAI's rate-limit
-telemetry for `codex`, and the Cursor dashboard API for `cursor`.
+telemetry for `codex`, the Cursor dashboard API for `cursor`, and xAI's
+weekly credit-usage API for `grok`.
 
 ## Install
 
@@ -36,6 +38,7 @@ npm run build
 llm-budget claude install    # register Claude Code hooks
 llm-budget codex install     # register Codex native hooks
 llm-budget cursor install    # register Cursor Agent hooks
+llm-budget grok install      # register Grok CLI hooks
 ```
 
 ## How it decides
@@ -135,6 +138,40 @@ so a crash in this tool cannot lock up your editor.
 You also get a notification as your Cursor credential nears expiry, since an
 expired token means the guard starts blocking.
 
+### Grok CLI
+
+`llm-budget grok install` writes `~/.grok/hooks/llm-budget.json` (owned
+outright — install writes it, uninstall deletes it) plus a wrapper under
+`~/.local/share/llm-budget/bin/grok-hook`. Every `PreToolUse` call checks
+xAI's weekly credit pool and denies with `{"decision":"deny","reason":...}`
+on stdout plus exit 2. Undo with `llm-budget grok uninstall`.
+
+The Grok CLI hook platform fails **open**: a crashed or timed-out hook is
+treated as an allow. The wrapper compensates by running Node and inspecting
+its stdout rather than `exec`ing it, so a missing Node, a crash, or a timeout
+all fall back to a hard-coded deny instead of silently letting the tool call
+through.
+
+xAI's weekly credit percent is not published on every plan. A plan that
+reports no percent is **unmetered**, not 0% — `unmetered` and `unavailable`
+(auth expired, request failed) are shown as distinct status lines because
+their fixes are different. Because this is a guard, `grok.windows.weekly`
+ships enforced at `80`; an unmetered or unavailable reading fails closed
+like any other unknown usage until you set it to `null` or use an override.
+
+```
+$ llm-budget grok status
+llm-budget
+Config: ~/.config/llm-budget/config.jsonc
+On unknown usage: block (failClosed)
+
+Grok CLI:
+  Hooks: installed
+  Weekly: 12% (block at 80%) — resets 2026-09-08T00:00:00.000Z
+  Override: none
+  Exceptions: none
+```
+
 ## Configuration
 
 One file for every agent: `~/.config/llm-budget/config.jsonc`.
@@ -176,6 +213,13 @@ with a visible error, not silently replaced with defaults.
     "warnings": [0.5, 0.75, 0.9],
     "excludeConversationIds": []
   },
+  "grok": {
+    "enabled": true,
+    "windows": {
+      "weekly": { "blockAtPercent": 80 }
+    },
+    "excludeSessionIds": []
+  },
   "enforcement": { "failClosed": true },
   "excludeSessionIds": []
 }
@@ -192,6 +236,7 @@ Window reference:
 | `cursor.windows.cursorModels` | Cursor Agent | dashboard "Cursor Models" meter |
 | `cursor.windows.otherModels` | Cursor Agent | dashboard "Other Models" meter |
 | `cursor.windows.total` | Cursor Agent | combined spend meter (monitor-only by default) |
+| `grok.windows.weekly` | Grok CLI | xAI's weekly credit pool (enforced at 80 by default) |
 
 `cursor.rateLimit.maxEventsPerHour` is the event-rate backstop (not a budget
 window). Set it to `null` to disable.
@@ -214,30 +259,34 @@ Every agent supports `install | uninstall | help` under its scope.
 
 | Command | |
 |---|---|
-| `llm-budget` / `status` / `usage` | all three agents |
+| `llm-budget` / `status` / `usage` | all four agents |
 | `llm-budget claude install` | register Claude Code hooks |
 | `llm-budget claude uninstall` | remove Claude Code hooks |
 | `llm-budget codex install` | register Codex native hooks |
 | `llm-budget codex uninstall` | remove Codex native hooks |
 | `llm-budget cursor install` | register Cursor Agent hooks |
 | `llm-budget cursor uninstall [--purge-data]` | remove Cursor Agent hooks |
+| `llm-budget grok install` | register Grok CLI hooks |
+| `llm-budget grok uninstall` | remove Grok CLI hooks |
 | `llm-budget watchdog [--interval <duration>] [--once]` | stop running Codex sessions on trip |
 
-Claude Code, Codex, and Cursor Agent share `~/.config/llm-budget/config.jsonc`.
-Cursor Agent still uses `llm-budget cursor ...` for dashboard-specific
-commands, and its hooks still register in `~/.cursor/hooks.json`.
+Claude Code, Codex, Cursor Agent, and Grok CLI share
+`~/.config/llm-budget/config.jsonc`. Cursor Agent and Grok CLI each keep their
+own scope (`llm-budget cursor ...`, `llm-budget grok ...`) for
+provider-specific commands, and their hooks register in their own files
+(`~/.cursor/hooks.json`, `~/.grok/hooks/llm-budget.json`).
 
-| Claude Code + Codex | Cursor Agent | |
-|---|---|---|
-| `llm-budget override <duration>` | `llm-budget cursor override <duration>` | temporarily bypass gates |
-| `llm-budget override off` | `llm-budget cursor override off` | clear the override |
-| `llm-budget except add <session-id>` | `llm-budget cursor except add <session-id>` | exempt a session |
-| `llm-budget except remove <session-id>` | `llm-budget cursor except remove <session-id>` | remove an exception |
-| `llm-budget except list` | `llm-budget cursor except list` | list exceptions |
-| `llm-budget config` | `llm-budget cursor config` | print resolved configuration |
-| | `llm-budget cursor status` | dashboard usage, thresholds, credential expiry |
-| | `llm-budget cursor spending` | raw period usage from the API as JSON |
-| | `llm-budget cursor history` | recorded local events |
+| Claude Code + Codex | Cursor Agent | Grok CLI | |
+|---|---|---|---|
+| `llm-budget override <duration>` | `llm-budget cursor override <duration>` | `llm-budget grok override <duration>` | temporarily bypass gates |
+| `llm-budget override off` | `llm-budget cursor override off` | `llm-budget grok override off` | clear the override |
+| `llm-budget except add <session-id>` | `llm-budget cursor except add <session-id>` | `llm-budget grok except add <session-id>` | exempt a session |
+| `llm-budget except remove <session-id>` | `llm-budget cursor except remove <session-id>` | `llm-budget grok except remove <session-id>` | remove an exception |
+| `llm-budget except list` | `llm-budget cursor except list` | `llm-budget grok except list` | list exceptions |
+| `llm-budget config` | `llm-budget cursor config` | | print resolved configuration |
+| | `llm-budget cursor status` | `llm-budget grok status` | provider-specific status |
+| | `llm-budget cursor spending` | | raw period usage from the API as JSON |
+| | `llm-budget cursor history` | | recorded local events |
 
 ## Development
 
