@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import * as v from "valibot";
 import { ConfigFileSchema } from "./config-schema.js";
-import { asJsonObject, type JsonValue } from "./json-value.js";
+import type { JsonValue } from "./json-value.js";
 import { parseJsonc } from "./jsonc.js";
 import { configPath } from "./paths.js";
 
@@ -357,13 +357,7 @@ export function ensureConfig(home?: string): Config {
     return config;
   }
   try {
-    const config = parseConfig(raw);
-    const rawObject = asJsonObject(raw);
-    // Pre-grok config.jsonc files never gained a "grok" key; backfill the file once.
-    if (rawObject === null || !("grok" in rawObject)) {
-      persist(home, config);
-    }
-    return config;
+    return parseConfig(raw);
   } catch (error) {
     if (error instanceof ConfigError) throw withPath(path, error.message);
     throw error;
