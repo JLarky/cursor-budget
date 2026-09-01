@@ -19,7 +19,7 @@ test("creditUsagePercent present is measured, including a real zero", () => {
   assert.deepEqual(nonzero.percent, { kind: "measured", percent: 42.5, source: "creditUsagePercent" });
 });
 
-test("missing creditUsagePercent with onDemandCap 0 is unmetered, never 0%", () => {
+test("missing creditUsagePercent with onDemandCap 0 is measured 0, not unmetered", () => {
   const weekly = parseCreditsPayload(
     {
       config: {
@@ -30,7 +30,7 @@ test("missing creditUsagePercent with onDemandCap 0 is unmetered, never 0%", () 
     },
     NOW,
   );
-  assert.equal(weekly.percent.kind, "unmetered");
+  assert.deepEqual(weekly.percent, { kind: "measured", percent: 0, source: "omittedPercent" });
   assert.equal(weekly.resetsAt, "2026-09-08T00:00:00.000Z");
 });
 

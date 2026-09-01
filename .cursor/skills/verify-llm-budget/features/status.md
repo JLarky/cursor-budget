@@ -43,4 +43,4 @@ Preconditions:
 - `llm-budget cursor spending` hits the Cursor dashboard with `forceRefresh`. It fails without auth. It is not a status entry point.
 - On macOS, Claude usage can still read the real Keychain even with isolated HOME. Cursor and Codex auth stay under HOME. If Claude windows show real percents during status, you are seeing the user's Keychain, not the fixture.
 - `cursor status` and `grok status` are each a different layout from the combined view. Do not grep combined headings out of either.
-- Grok's `Weekly:` line distinguishes `no weekly percent` (a plan that never reports a percent) from `unavailable` (auth missing or the request failed). Without Grok auth in isolated HOME, expect `unavailable`, not `no weekly percent`.
+- Grok's `Weekly:` line distinguishes `0%` (xAI sent a number, or omitted the field and we treat that as 0 with a warning) from `unavailable` (auth missing or the request failed). Without Grok auth in isolated HOME, expect `unavailable`.

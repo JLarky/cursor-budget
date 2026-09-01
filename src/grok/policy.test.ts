@@ -26,6 +26,17 @@ function measuredWeekly(pct: number): GrokWeekly {
   };
 }
 
+function omittedWeekly(): GrokWeekly {
+  const p = percent(0);
+  assert.ok(p !== null, "test fixture percent must be valid");
+  return {
+    percent: { kind: "measured", percent: p, source: "omittedPercent" },
+    resetsAt: "2026-09-08T00:00:00.000Z",
+    planLabel: null,
+    fetchedAt: NOW.toISOString(),
+  };
+}
+
 function unmeteredWeekly(): GrokWeekly {
   return {
     percent: { kind: "unmetered", because: "plan does not report a percent" },
@@ -118,6 +129,11 @@ test("armed and at or over threshold denies", () => {
   assert.equal(over.kind, "deny");
 });
 
+test("armed + omitted percent 0 allows under failClosed", () => {
+  const verdict = decide(state({ weekly: omittedWeekly(), failClosed: true }), enforceable());
+  assert.deepEqual(verdict, { kind: "allow", why: "underBudget" });
+});
+
 test("armed + unmetered denies under failClosed, allows when off", () => {
   const closed = decide(state({ weekly: unmeteredWeekly(), failClosed: true }), enforceable());
   assert.equal(closed.kind, "deny");
@@ -162,6 +178,16 @@ test("renderDenyReason names the session id and the recover commands", () => {
   assert.match(reason, /sess-abc/);
   assert.match(reason, /90% reached the 80% block threshold/);
   assert.match(reason, /llm-budget grok except add sess-abc/);
+});
+
+test("status warns when xAI omitted the weekly percent, not on a real 0", () => {
+  const omitted = renderGrokStatus(state({ weekly: omittedWeekly() }), { installed: true });
+  assert.match(omitted.join("\n"), /Weekly: 0% \(block at 80%\)/);
+  assert.match(omitted.join("\n"), /Warning: xAI omitted weekly percent; treating as 0%/);
+
+  const realZero = renderGrokStatus(state({ weekly: measuredWeekly(0) }), { installed: true });
+  assert.match(realZero.join("\n"), /Weekly: 0% \(block at 80%\)/);
+  assert.doesNotMatch(realZero.join("\n"), /omitted weekly percent/);
 });
 
 test("status distinguishes not-metered from unavailable", () => {
