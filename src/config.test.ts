@@ -197,6 +197,49 @@ test("first run writes a documented config.jsonc with every field", () => {
   }
 });
 
+test("ensureConfig backfills a pre-grok config.jsonc with the grok section", () => {
+  const home = tempHome("llm-budget-grok-backfill-");
+  try {
+    mkdirSync(join(home, ".config", "llm-budget"), { recursive: true });
+    writeFileSync(
+      join(home, ".config", "llm-budget", "config.jsonc"),
+      `{
+  "claude": { "windows": { "weekly": { "blockAtPercent": 42 } } },
+  "codex": {},
+  "cursor": {},
+  "enforcement": { "failClosed": true }
+}
+`,
+    );
+    const config = ensureConfig(home);
+    assert.equal(config.claude.windows.weekly.blockAtPercent, 42);
+
+    const text = readFileSync(configPath(home), "utf8");
+    assert.match(text, /"grok"/);
+    assert.match(text, /grok\.windows\.weekly/);
+    assert.match(text, /"weekly": \{ "blockAtPercent": 42 \}/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("ensureConfig leaves a config.jsonc with a grok section untouched", () => {
+  const home = tempHome("llm-budget-grok-present-");
+  try {
+    mkdirSync(join(home, ".config", "llm-budget"), { recursive: true });
+    const original = `{
+  "grok": { "windows": { "weekly": { "blockAtPercent": 55 } } }
+}
+`;
+    writeFileSync(join(home, ".config", "llm-budget", "config.jsonc"), original);
+    ensureConfig(home);
+    const text = readFileSync(configPath(home), "utf8");
+    assert.equal(text, original);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("round-trip: rendering the documented file and parsing it back is stable", () => {
   const customized = parseConfig({
     claude: { windows: { weekly: { blockAtPercent: 50 } } },

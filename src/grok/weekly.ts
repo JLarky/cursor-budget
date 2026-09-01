@@ -240,6 +240,13 @@ async function refreshUnderGrokLock(stale: Bearer, deps: GrokWeeklyDeps): Promis
   }
 }
 
+/** Normalize a vendor timestamp to `Date#toISOString()`, matching Claude and Codex. */
+function toIsoResetsAt(value: string | null): string | null {
+  if (value === null) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 function unavailableWeekly(because: string, resetsAt: string | null, now: Date): GrokWeekly {
   return {
     percent: { kind: "unavailable", because },
@@ -264,8 +271,9 @@ export function parseCreditsPayload(json: JsonValue, fetchedAt: Date): GrokWeekl
     return unavailableWeekly("Grok billing response was not the expected object", null, fetchedAt);
   }
 
-  const resetsAt =
-    jsonString(asJsonObject(config.currentPeriod)?.end) ?? jsonString(config.billingPeriodEnd);
+  const resetsAt = toIsoResetsAt(
+    jsonString(asJsonObject(config.currentPeriod)?.end) ?? jsonString(config.billingPeriodEnd),
+  );
 
   const reported = finiteNumber(config.creditUsagePercent);
   if (reported !== null) {
