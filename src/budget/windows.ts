@@ -1,12 +1,15 @@
 /**
  * Window ids shared by every agent's usage windows plus the local
- * rolling-hour event-count backstop. Claude and Codex ids match the vendor's
- * own window names; Cursor ids match the dashboard meter names.
+ * rolling-hour event-count backstop. Claude, Codex, and Copilot ids match
+ * the vendor's own window names; Cursor ids match the dashboard meter names.
  */
 export type WindowId =
   | "weekly"
   | "five_hour"
   | "session"
+  | "chat"
+  | "completions"
+  | "premium_interactions"
   | "cursorModels"
   | "otherModels"
   | "total"

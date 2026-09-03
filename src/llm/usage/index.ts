@@ -2,6 +2,7 @@ import { asJsonArray, jsonString, parseJsonText, type JsonValue } from "../../js
 import { getState, openLlmDb, setState, type DatabaseSync } from "../db.js";
 import { fetchClaudeUsage } from "./claude.js";
 import { fetchCodexUsage } from "./codex.js";
+import { fetchCopilotUsage } from "./copilot.js";
 import type { FetchFn } from "./http.js";
 import { asRecord, finiteNumber } from "./http.js";
 import type { ProviderUsage, UsageSnapshot, UsageWindow } from "./types.js";
@@ -15,6 +16,7 @@ export type {
 export { emptySnapshot, errored, providerUsage, unavailable } from "./types.js";
 export { fetchClaudeUsage } from "./claude.js";
 export { fetchCodexUsage } from "./codex.js";
+export { fetchCopilotUsage } from "./copilot.js";
 
 /** Soft TTL before a hook process hits Anthropic / OpenAI again. */
 export const DEFAULT_CACHE_TTL_MS = 90_000;
@@ -31,6 +33,7 @@ export interface FetchDirectUsageOptions {
   db?: DatabaseSync;
   claudeHome?: string;
   codexHome?: string;
+  copilotHome?: string;
   platform?: NodeJS.Platform;
 }
 
@@ -90,7 +93,7 @@ function isFresh(snapshot: UsageSnapshot, now: Date, ttlMs: number): boolean {
 }
 
 /**
- * Fetch Claude Code + Codex usage from the vendor APIs.
+ * Fetch Claude Code + Codex + GitHub Copilot usage from the vendor APIs.
  *
  * Never throws for expected failures: a missing login or a down API becomes
  * an `unavailable` / `error` provider entry so the guard can fail closed.
@@ -107,13 +110,14 @@ export async function fetchDirectUsage(
     return cached;
   }
 
-  const [claude, codex] = await Promise.all([
+  const [claude, codex, copilot] = await Promise.all([
     fetchClaudeUsage(options),
     fetchCodexUsage(options),
+    fetchCopilotUsage(options),
   ]);
   const snapshot: UsageSnapshot = {
     fetchedAt: now.toISOString(),
-    providers: [claude, codex],
+    providers: [claude, codex, copilot],
   };
   writeCache(db, snapshot);
   return snapshot;

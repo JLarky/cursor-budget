@@ -22,7 +22,8 @@ don't see the real prompt payload — system prompts, file context, cache reads
 and reasoning tokens are all invisible — so any local estimate is guessing at
 the majority of the bill. Every guard here reads numbers the provider actually
 reports: Anthropic's OAuth usage API for `claude`, OpenAI's rate-limit
-telemetry for `codex`, the Cursor dashboard API for `cursor`, and xAI's
+telemetry for `codex`, GitHub Copilot's user API for `copilot` (shown in
+status, not enforced), the Cursor dashboard API for `cursor`, and xAI's
 weekly credit-usage API for `grok`.
 
 ## Install
@@ -260,7 +261,7 @@ Every agent supports `install | uninstall | help` under its scope.
 
 | Command | |
 |---|---|
-| `llm-budget` / `status` / `usage` | all four agents |
+| `llm-budget` / `status` / `usage` | Claude, Codex, Copilot, Cursor, Grok |
 | `llm-budget claude install` | register Claude Code hooks |
 | `llm-budget claude uninstall` | remove Claude Code hooks |
 | `llm-budget codex install` | register Codex native hooks |

@@ -5,8 +5,9 @@ import { tempHome } from "../test-home.js";
 import { setCursorOverride, openDb } from "../db/client.js";
 import { openLlmDb, setState } from "./db.js";
 import { runCli } from "./cli-testkit.js";
+import { writeUsageCache } from "./usage/index.js";
 
-test("status covers all four agents", { timeout: 60_000 }, async () => {
+test("status covers Claude, Codex, Copilot, Cursor, and Grok", { timeout: 60_000 }, async () => {
   const home = tempHome("llm-budget-cli4-");
   const result = await runCli(["status"], home);
   assert.equal(result.code, 0);
@@ -16,15 +17,57 @@ test("status covers all four agents", { timeout: 60_000 }, async () => {
   assert.match(alias.stdout, /Cursor Agent:/);
   assert.match(result.stdout, /Claude Code:/);
   assert.match(result.stdout, /Codex:/);
+  assert.match(result.stdout, /GitHub Copilot:/);
   assert.match(result.stdout, /Cursor Agent:/);
   assert.match(result.stdout, /Grok CLI:/);
+  assert.match(result.stdout, /GitHub Copilot:\n  Usage unavailable — GitHub Copilot is not signed in/);
   assert.match(result.stdout, /Claude Code:\n  Hooks: not installed — run llm-budget claude install/);
   assert.match(result.stdout, /Cursor Agent:\n  Hooks: not installed — run llm-budget cursor install/);
   assert.match(result.stdout, /Grok CLI:\n  Hooks: not installed — run llm-budget grok install/);
   assert.match(result.stdout, /Weekly: unavailable/);
-  // Every agent block carries its own escape-hatch state.
+  // Guarded agent blocks carry escape-hatch state. Copilot is status-only.
   assert.equal(result.stdout.split("Override:").length - 1 >= 4, true);
   assert.doesNotMatch(result.stdout, /\(claude\+codex\)/);
+});
+
+test("status prints Copilot windows from a cached snapshot", { timeout: 60_000 }, async () => {
+  const home = tempHome("llm-budget-cli-copilot-");
+  writeUsageCache(openLlmDb(home), {
+    fetchedAt: new Date().toISOString(),
+    providers: [
+      {
+        providerId: "claude",
+        displayName: "Claude Code",
+        status: "unavailable",
+        planLabel: null,
+        windows: [],
+        error: "not signed in",
+      },
+      {
+        providerId: "codex",
+        displayName: "Codex",
+        status: "unavailable",
+        planLabel: null,
+        windows: [],
+        error: "not signed in",
+      },
+      {
+        providerId: "copilot",
+        displayName: "GitHub Copilot",
+        status: "available",
+        planLabel: "Individual",
+        windows: [{ id: "chat", label: "Chat", usedPct: 12, resetsAt: null }],
+        error: null,
+      },
+    ],
+  });
+  const result = await runCli(["status"], home);
+  assert.equal(result.code, 0);
+  const copilotBlock = result.stdout.split("GitHub Copilot:")[1]?.split("Cursor Agent:")[0] ?? "";
+  assert.match(copilotBlock, /Plan: Individual/);
+  assert.match(copilotBlock, /Chat: 12% \(monitor-only\)/);
+  assert.doesNotMatch(copilotBlock, /Hooks:/);
+  assert.doesNotMatch(copilotBlock, /Override:/);
 });
 
 test("expired Cursor override is not shown as active in combined status", { timeout: 60_000 }, async () => {
