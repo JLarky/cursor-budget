@@ -8,6 +8,14 @@ import { errored, unavailable, type ProviderUsage, type UsageWindow } from "./ty
 const USER_URL = "https://api.github.com/copilot_internal/user";
 const EDITOR_VERSION = "Vim/9.0.0";
 const USER_AGENT = "GithubCopilot/1.0.0";
+const GITHUB_COM = "github.com";
+const GITHUB_OAUTH_TOKEN = /^gh[pousr]_[A-Za-z0-9_]+$/;
+
+const QUOTA_KEYS = [
+  ["chat", "Chat"],
+  ["completions", "Completions"],
+  ["premium_interactions", "Premium requests"],
+] as const;
 
 export interface CopilotFetchOptions {
   home?: string;
@@ -25,10 +33,20 @@ interface CopilotUsageWindows {
   planLabel: string | null;
 }
 
+function isGithubCom(host: string): boolean {
+  return host === GITHUB_COM || host.startsWith(`${GITHUB_COM}:`);
+}
+
+function oauthTokenFromBytes(bytes: Uint8Array): string | null {
+  const oauthToken = Buffer.from(bytes).toString("utf8").trim();
+  return GITHUB_OAUTH_TOKEN.test(oauthToken) ? oauthToken : null;
+}
+
 function copilotConfigDir(options: CopilotFetchOptions): string {
   if (options.copilotHome) return options.copilotHome;
+  if (options.home) return join(options.home, ".config", "github-copilot");
   const xdgConfig = process.env.XDG_CONFIG_HOME;
-  const base = xdgConfig || join(options.home ?? homedir(), ".config");
+  const base = xdgConfig || join(homedir(), ".config");
   return join(base, "github-copilot");
 }
 
@@ -40,15 +58,18 @@ async function readAuthDb(dir: string): Promise<CopilotAuth | null> {
     const { DatabaseSync } = await import("node:sqlite");
     const db = new DatabaseSync(path, { readOnly: true });
     try {
-      // SAFETY: SELECT token_ciphertext FROM oauth_tokens; the query selects exactly
-      // one BLOB column, which node:sqlite returns as a Uint8Array, or no row at all.
+      // SAFETY: SELECT token_ciphertext FROM oauth_tokens WHERE schema 0 and
+      // github.com; that BLOB column is a Uint8Array, or there is no row.
       const row = db
         .prepare(
-          "SELECT token_ciphertext FROM oauth_tokens ORDER BY last_used_at DESC LIMIT 1",
+          `SELECT token_ciphertext FROM oauth_tokens
+           WHERE token_schema_version = 0
+             AND (auth_authority = ? OR auth_authority LIKE ?)
+           ORDER BY last_used_at DESC LIMIT 1`,
         )
-        .get() as { token_ciphertext: Uint8Array } | undefined;
+        .get(GITHUB_COM, `${GITHUB_COM}:%`) as { token_ciphertext: Uint8Array } | undefined;
       if (!row) return null;
-      const oauthToken = Buffer.from(row.token_ciphertext).toString("utf8").trim();
+      const oauthToken = oauthTokenFromBytes(row.token_ciphertext);
       return oauthToken ? { oauthToken } : null;
     } finally {
       db.close();
@@ -65,10 +86,11 @@ function readAuthJson(dir: string, fileName: string): CopilotAuth | null {
   try {
     const root = asJsonObject(parseJsonText(readFileSync(path, "utf8")));
     if (!root) return null;
-    for (const value of Object.values(root)) {
+    for (const [host, value] of Object.entries(root)) {
+      if (!isGithubCom(host)) continue;
       const entry = asJsonObject(value);
       const oauthToken = jsonString(entry?.oauth_token)?.trim();
-      if (oauthToken) return { oauthToken };
+      if (oauthToken && GITHUB_OAUTH_TOKEN.test(oauthToken)) return { oauthToken };
     }
     return null;
   } catch {
@@ -85,27 +107,38 @@ async function readAuth(options: CopilotFetchOptions): Promise<CopilotAuth | nul
   );
 }
 
-function quotaWindow(id: string, label: string, raw: JsonValue | null | undefined): UsageWindow | null {
+function quotaWindow(
+  id: string,
+  label: string,
+  raw: JsonValue | null | undefined,
+): UsageWindow | null | "malformed" {
   const rec = asRecord(raw);
-  if (!rec) return null;
+  if (!rec) return "malformed";
   if (rec.unlimited === true) return null;
   const percentRemaining = finiteNumber(rec.percent_remaining);
-  if (percentRemaining == null) return null;
+  if (percentRemaining == null) return "malformed";
   return { id, label, usedPct: 100 - percentRemaining, resetsAt: null };
 }
 
-function windowsFromUser(json: JsonValue | null | undefined): CopilotUsageWindows {
+function windowsFromUser(
+  json: JsonValue | null | undefined,
+): CopilotUsageWindows | "unparseable" {
   const rec = asRecord(json);
-  const quotas = asRecord(rec?.quota_snapshots);
-  const resetsAt = jsonString(rec?.quota_reset_date_utc);
+  if (!rec) return "unparseable";
+  const quotas = asRecord(rec.quota_snapshots);
+  if (!quotas) return "unparseable";
+  const resetsAt = jsonString(rec.quota_reset_date_utc);
   const windows: UsageWindow[] = [];
-  const chat = quotaWindow("chat", "Chat", quotas?.chat);
-  const completions = quotaWindow("completions", "Completions", quotas?.completions);
-  const premium = quotaWindow("premium_interactions", "Premium requests", quotas?.premium_interactions);
-  for (const w of [chat, completions, premium]) {
-    if (w) windows.push(resetsAt ? { ...w, resetsAt } : w);
+  let sawKnown = false;
+  for (const [id, label] of QUOTA_KEYS) {
+    if (!(id in quotas)) continue;
+    sawKnown = true;
+    const parsed = quotaWindow(id, label, quotas[id]);
+    if (parsed === "malformed") return "unparseable";
+    if (parsed) windows.push(resetsAt ? { ...parsed, resetsAt } : parsed);
   }
-  const plan = jsonString(rec?.copilot_plan);
+  if (!sawKnown) return "unparseable";
+  const plan = jsonString(rec.copilot_plan);
   return {
     windows,
     planLabel: plan ? plan.charAt(0).toUpperCase() + plan.slice(1) : null,
@@ -161,23 +194,16 @@ export async function fetchCopilotUsage(options: CopilotFetchOptions = {}): Prom
     return errored("copilot", "GitHub Copilot", result.detail);
   }
 
-  const { windows, planLabel } = windowsFromUser(result.json);
-  if (windows.length === 0) {
-    return {
-      providerId: "copilot",
-      displayName: "GitHub Copilot",
-      status: "available",
-      planLabel,
-      windows: [],
-      error: null,
-    };
+  const mapped = windowsFromUser(result.json);
+  if (mapped === "unparseable") {
+    return errored("copilot", "GitHub Copilot", "Copilot user API returned no windows");
   }
   return {
     providerId: "copilot",
     displayName: "GitHub Copilot",
     status: "available",
-    planLabel,
-    windows,
+    planLabel: mapped.planLabel,
+    windows: mapped.windows,
     error: null,
   };
 }
