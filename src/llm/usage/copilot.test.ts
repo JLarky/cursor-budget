@@ -13,7 +13,14 @@ function jsonResponse(status: number, body: JsonValue): Response {
   });
 }
 
-async function homeWithAuthDb(): Promise<string> {
+interface AuthDbRow {
+  authAuthority: string;
+  tokenBytes: Buffer;
+  schemaVersion: number;
+  lastUsedAt: number;
+}
+
+async function homeWithAuthDb(rows?: AuthDbRow[]): Promise<string> {
   const home = tempHome("llm-budget-copilot-db-");
   const dir = join(home, ".config", "github-copilot");
   mkdirSync(dir, { recursive: true });
@@ -32,24 +39,44 @@ async function homeWithAuthDb(): Promise<string> {
     updated_at INTEGER NOT NULL,
     last_used_at INTEGER NOT NULL
   )`);
-  db.prepare(
+  const insert = db.prepare(
     `INSERT INTO oauth_tokens
       (auth_authority, oauth_client_id, user_login, scopes, token_ciphertext, token_schema_version, source_editor_id, created_at, updated_at, last_used_at)
-     VALUES ('github.com', 'client', 'octocat', 'repo', ?, 0, 'vim', 1, 1, 1)`,
-  ).run(Buffer.from("ghu_dbtoken"));
+     VALUES (?, 'client', 'octocat', 'repo', ?, ?, 'vim', 1, 1, ?)`,
+  );
+  for (const row of rows ?? [
+    {
+      authAuthority: "github.com",
+      tokenBytes: Buffer.from("ghu_dbtoken"),
+      schemaVersion: 0,
+      lastUsedAt: 1,
+    },
+  ]) {
+    insert.run(row.authAuthority, row.tokenBytes, row.schemaVersion, row.lastUsedAt);
+  }
   db.close();
   return home;
 }
 
-function homeWithHostsJson(): string {
+function homeWithHostsJson(
+  hosts: Record<string, { oauth_token: string }> = {
+    "github.com": { oauth_token: "ghu_jsontoken" },
+  },
+): string {
   const home = tempHome("llm-budget-copilot-json-");
   const dir = join(home, ".config", "github-copilot");
   mkdirSync(dir, { recursive: true });
-  writeFileSync(
-    join(dir, "hosts.json"),
-    JSON.stringify({ "github.com": { user: "octocat", oauth_token: "ghu_jsontoken" } }),
-  );
+  writeFileSync(join(dir, "hosts.json"), JSON.stringify(hosts));
   return home;
+}
+
+function chatWindows(): JsonValue {
+  return {
+    copilot_plan: "individual",
+    quota_snapshots: {
+      chat: { percent_remaining: 50, unlimited: false },
+    },
+  };
 }
 
 test("fetchCopilotUsage reads the auth.db token and maps quota windows", async () => {
@@ -135,4 +162,98 @@ test("fetchCopilotUsage treats 401 as expired auth", async () => {
   });
   assert.equal(usage.status, "unavailable");
   assert.match(usage.error ?? "", /expired/);
+});
+
+test("fetchCopilotUsage honors home over XDG_CONFIG_HOME", async () => {
+  const prev = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = tempHome("llm-budget-copilot-xdg-");
+  try {
+    const home = await homeWithAuthDb();
+    const usage = await fetchCopilotUsage({
+      home,
+      fetch: async (_url, init) => {
+        assert.equal(new Headers(init?.headers).get("Authorization"), "token ghu_dbtoken");
+        return jsonResponse(200, chatWindows());
+      },
+    });
+    assert.equal(usage.status, "available");
+    assert.equal(usage.windows[0]?.usedPct, 50);
+  } finally {
+    if (prev === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = prev;
+  }
+});
+
+test("fetchCopilotUsage ignores encrypted auth.db rows and falls back to hosts.json", async () => {
+  const home = await homeWithAuthDb([
+    {
+      authAuthority: "github.com",
+      tokenBytes: Buffer.from("not-a-github-token"),
+      schemaVersion: 1,
+      lastUsedAt: 2,
+    },
+  ]);
+  const dir = join(home, ".config", "github-copilot");
+  writeFileSync(
+    join(dir, "hosts.json"),
+    JSON.stringify({ "github.com": { oauth_token: "ghu_jsontoken" } }),
+  );
+  const usage = await fetchCopilotUsage({
+    home,
+    fetch: async (_url, init) => {
+      assert.equal(new Headers(init?.headers).get("Authorization"), "token ghu_jsontoken");
+      return jsonResponse(200, chatWindows());
+    },
+  });
+  assert.equal(usage.status, "available");
+});
+
+test("fetchCopilotUsage prefers the github.com auth.db row over a newer GHE token", async () => {
+  const home = await homeWithAuthDb([
+    {
+      authAuthority: "github.com",
+      tokenBytes: Buffer.from("ghu_dbtoken"),
+      schemaVersion: 0,
+      lastUsedAt: 1,
+    },
+    {
+      authAuthority: "ghe.example.com",
+      tokenBytes: Buffer.from("ghu_ghetoken"),
+      schemaVersion: 0,
+      lastUsedAt: 2,
+    },
+  ]);
+  const usage = await fetchCopilotUsage({
+    home,
+    fetch: async (_url, init) => {
+      assert.equal(new Headers(init?.headers).get("Authorization"), "token ghu_dbtoken");
+      return jsonResponse(200, chatWindows());
+    },
+  });
+  assert.equal(usage.status, "available");
+});
+
+test("fetchCopilotUsage ignores non-github.com keys in hosts.json", async () => {
+  const home = homeWithHostsJson({
+    "ghe.example.com": { oauth_token: "ghu_ghetoken" },
+    "github.com": { oauth_token: "ghu_jsontoken" },
+  });
+  const usage = await fetchCopilotUsage({
+    home,
+    fetch: async (_url, init) => {
+      assert.equal(new Headers(init?.headers).get("Authorization"), "token ghu_jsontoken");
+      return jsonResponse(200, chatWindows());
+    },
+  });
+  assert.equal(usage.status, "available");
+});
+
+test("fetchCopilotUsage errors when a 200 body has no quota_snapshots", async () => {
+  const home = await homeWithAuthDb();
+  const usage = await fetchCopilotUsage({
+    home,
+    fetch: async () => jsonResponse(200, { message: "nope" }),
+  });
+  assert.equal(usage.status, "error");
+  assert.match(usage.error ?? "", /no windows/);
 });
