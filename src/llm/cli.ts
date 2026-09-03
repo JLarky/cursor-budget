@@ -30,9 +30,11 @@ import { getCursorOverride } from "../db/client.js";
 import { configPath } from "../paths.js";
 import {
   fetchDirectUsage,
-  providerUsage,
-  type UsageSnapshot,
+  type ProviderUsage,
 } from "./usage/index.js";
+import type { Config } from "../config.js";
+import type { DatabaseSync } from "./db.js";
+import { streamInOrder } from "./stream-in-order.js";
 // Cursor Agent scope — dashboard API; config lives in ~/.config/llm-budget with the other agents.
 import { getCursorPeriodUsage } from "../accounting/cursor-api.js";
 import { buildCursorMeasurements } from "../cursor-measurements.js";
@@ -126,7 +128,7 @@ async function main(): Promise<void> {
     }
     case "status":
     case "usage":
-      process.stdout.write(await statusCommand());
+      await statusCommand();
       return;
     case "override":
       process.stdout.write(overrideCommand(rest[0]));
@@ -142,7 +144,7 @@ async function main(): Promise<void> {
     case undefined:
       // No arguments: show the live budget view up front; the help wall is
       // one keystroke away.
-      process.stdout.write(await statusCommand());
+      await statusCommand();
       process.stdout.write(
         "\nRun `llm-budget help` for all commands and scopes.\n",
       );
@@ -319,89 +321,97 @@ Each gate blocks when usage reaches its configured percent. If usage is
 unknown the guards block by default (fail closed).
 `;
 
-async function statusCommand(home = homedir()): Promise<string> {
-  const { config, warning } = loadConfigForRead(home);
-  const db = openLlmDb(home);
-  const now = new Date();
-  const lines: string[] = ["llm-budget"];
-  if (warning) lines.push(warning, "");
+interface Latch<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+}
 
-  // Global, once — not repeated per agent.
-  lines.push(`Config: ${configPath(home)}`);
+/** Resolves once, ignoring every resolve() after the first. */
+function createLatch<T>(): Latch<T> {
+  let settled = false;
+  let resolveFn!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolveFn = res;
+  });
+  return {
+    promise,
+    resolve(value: T) {
+      if (settled) return;
+      settled = true;
+      resolveFn(value);
+    },
+  };
+}
+
+interface ProviderResult {
+  usage: ProviderUsage | null;
+  error: string | null;
+}
+
+function buildAgentSection(
+  agent: "claude" | "codex",
+  config: Config,
+  db: DatabaseSync,
+  home: string,
+  now: Date,
+  result: ProviderResult,
+): string {
+  const enabled = agent === "claude" ? config.claude.enabled : config.codex.enabled;
+  const lines: string[] = [agent === "claude" ? "Claude Code:" : "Codex:"];
+  if (agent === "claude") {
+    lines.push(`  Hooks: ${formatInstallState(claudeHooksInstalled(home), "llm-budget claude install")}`);
+  } else {
+    lines.push(`  Hooks: ${formatInstallState(codexHooksInstalled(home), "llm-budget codex install")}`);
+    if (codexHooksInstalled(home)) {
+      lines.push(`  Trust: ${codexHookTrustStatus(home)}`);
+    }
+  }
+  if (!enabled) {
+    lines.push("  disabled in config");
+    return lines.join("\n");
+  }
+
+  const { usage: provider, error: fetchError } = result;
+  if (!provider && !fetchError) {
+    lines.push(`  Usage unknown — no ${agent} entry`);
+  } else if (!provider && fetchError) {
+    lines.push(`  Usage unknown — ${fetchError}`);
+  } else if (provider) {
+    if (provider.status !== "available") {
+      lines.push(
+        `  Usage ${provider.status}` + (provider.error ? ` — ${provider.error}` : ""),
+      );
+    }
+    if (provider.windows.length === 0) {
+      lines.push("  No usage windows reported yet");
+    }
+    for (const m of buildMeasurements(agent, config, provider)) {
+      lines.push(`  ${formatWindowLine(m, now)}`);
+    }
+  }
+
+  // Escape hatches for this store (Claude Code and Codex share it).
+  // Cursor Agent's override/exceptions render in its own block below.
+  // Expired overrides must display as none — same rule as Cursor status.
+  const overrideRaw = getState(db, "override_until");
+  const overrideUntil = overrideRaw ? new Date(overrideRaw) : null;
+  const overrideActive = Boolean(overrideUntil && overrideUntil.getTime() > now.getTime());
+  lines.push(`  Override: ${overrideActive ? `until ${overrideUntil?.toLocaleString()}` : "none"}`);
   lines.push(
-    `On unknown usage: ${config.enforcement.failClosed ? "block (failClosed)" : "allow (failClosed off)"}`,
+    `  Exceptions: ${config.excludeSessionIds.length > 0 ? config.excludeSessionIds.join(", ") : "none"}`,
   );
+  return lines.join("\n");
+}
 
-  let snapshot: UsageSnapshot | null = null;
-  let fetchError: string | null = null;
-  try {
-    snapshot = await fetchDirectUsage({ home });
-  } catch (error) {
-    fetchError = error instanceof Error ? error.message : String(error);
-  }
-
-  for (const agent of ["claude", "codex"] as const) {
-    const enabled = agent === "claude" ? config.claude.enabled : config.codex.enabled;
-    lines.push("");
-    lines.push(agent === "claude" ? "Claude Code:" : "Codex:");
-    if (agent === "claude") {
-      lines.push(`  Hooks: ${formatInstallState(claudeHooksInstalled(home), "llm-budget claude install")}`);
-    } else {
-      lines.push(`  Hooks: ${formatInstallState(codexHooksInstalled(home), "llm-budget codex install")}`);
-      if (codexHooksInstalled(home)) {
-        lines.push(`  Trust: ${codexHookTrustStatus(home)}`);
-      }
-    }
-    if (!enabled) {
-      lines.push("  disabled in config");
-      continue;
-    }
-
-    const provider = snapshot ? providerUsage(snapshot, agent) : null;
-    if (!provider && !fetchError) {
-      lines.push(`  Usage unknown — no ${agent} entry`);
-    } else if (!provider && fetchError) {
-      lines.push(`  Usage unknown — ${fetchError}`);
-    } else if (provider) {
-      if (provider.status !== "available") {
-        lines.push(
-          `  Usage ${provider.status}` +
-            (provider.error ? ` — ${provider.error}` : ""),
-        );
-      }
-      if (provider.windows.length === 0) {
-        lines.push("  No usage windows reported yet");
-      }
-      for (const m of buildMeasurements(agent, config, provider)) {
-        lines.push(`  ${formatWindowLine(m, now)}`);
-      }
-    }
-
-    // Escape hatches for this store (Claude Code and Codex share it).
-    // Cursor Agent's override/exceptions render in its own block below.
-    // Expired overrides must display as none — same rule as Cursor status.
-    const overrideRaw = getState(db, "override_until");
-    const overrideUntil = overrideRaw ? new Date(overrideRaw) : null;
-    const overrideActive = Boolean(overrideUntil && overrideUntil.getTime() > now.getTime());
-    lines.push(
-      `  Override: ${overrideActive ? `until ${overrideUntil?.toLocaleString()}` : "none"}`,
-    );
-    lines.push(
-      `  Exceptions: ${config.excludeSessionIds.length > 0 ? config.excludeSessionIds.join(", ") : "none"}`,
-    );
-  }
-
-  lines.push("");
-  lines.push("GitHub Copilot:");
-  const copilot = snapshot ? providerUsage(snapshot, "copilot") : null;
+function buildCopilotSection(now: Date, result: ProviderResult): string {
+  const lines: string[] = ["GitHub Copilot:"];
+  const { usage: copilot, error: fetchError } = result;
   if (!copilot && fetchError) {
     lines.push(`  Usage unknown — ${fetchError}`);
   } else if (!copilot) {
     lines.push("  Usage unknown — no copilot entry");
   } else if (copilot.status !== "available") {
-    lines.push(
-      `  Usage ${copilot.status}` + (copilot.error ? ` — ${copilot.error}` : ""),
-    );
+    lines.push(`  Usage ${copilot.status}` + (copilot.error ? ` — ${copilot.error}` : ""));
   } else {
     if (copilot.planLabel) lines.push(`  Plan: ${copilot.planLabel}`);
     const measurements = buildCopilotMeasurements(copilot);
@@ -413,52 +423,102 @@ async function statusCommand(home = homedir()): Promise<string> {
       }
     }
   }
+  return lines.join("\n");
+}
 
-  // Cursor Agent is a peer of Claude Code and Codex in this view.
-  lines.push("");
-  lines.push("Cursor Agent:");
+async function buildCursorSection(config: Config, home: string, now: Date): Promise<string> {
+  const lines: string[] = ["Cursor Agent:"];
   lines.push(`  Hooks: ${formatInstallState(cursorHooksInstalled(home), "llm-budget cursor install")}`);
   if (!config.cursor.enabled) {
     lines.push("  disabled in config");
-  } else {
-    try {
-      const result = await getCursorPeriodUsage({ home, cacheTtlMs: config.cursor.cacheTtlMs, now });
-      const plan = result.usage.planUsage;
-      for (const m of buildCursorMeasurements(config, plan)) {
-        lines.push(`  ${formatWindowLine(m, now)}`);
-      }
-      lines.push(
-        `  Period spend: ${
-          plan.limitUsd != null
-            ? `${formatUsd(plan.totalSpendUsd)} / ${formatUsd(plan.limitUsd)}`
-            : formatUsd(plan.totalSpendUsd)
-        }`,
-      );
-    } catch (error) {
-      const detail = error instanceof Error ? error.message.split(":")[0] : String(error);
-      lines.push(`  Dashboard usage: unavailable (${detail}) — sign in with cursor-agent`);
+    return lines.join("\n");
+  }
+  try {
+    const result = await getCursorPeriodUsage({ home, cacheTtlMs: config.cursor.cacheTtlMs, now });
+    const plan = result.usage.planUsage;
+    for (const m of buildCursorMeasurements(config, plan)) {
+      lines.push(`  ${formatWindowLine(m, now)}`);
     }
-    const cursorOverrideRaw = getCursorOverride(openLlmDb(home));
-    const cursorOverrideUntil = cursorOverrideRaw ? new Date(cursorOverrideRaw) : null;
-    const cursorOverrideActive =
-      cursorOverrideUntil && cursorOverrideUntil.getTime() > now.getTime();
     lines.push(
-      `  Override: ${cursorOverrideActive ? `until ${cursorOverrideUntil?.toLocaleString()}` : "none"}`,
-    );
-    lines.push(
-      `  Exceptions: ${
-        config.cursor.excludeConversationIds.length > 0
-          ? config.cursor.excludeConversationIds.join(", ")
-          : "none"
+      `  Period spend: ${
+        plan.limitUsd != null
+          ? `${formatUsd(plan.totalSpendUsd)} / ${formatUsd(plan.limitUsd)}`
+          : formatUsd(plan.totalSpendUsd)
       }`,
     );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message.split(":")[0] : String(error);
+    lines.push(`  Dashboard usage: unavailable (${detail}) — sign in with cursor-agent`);
   }
+  const cursorOverrideRaw = getCursorOverride(openLlmDb(home));
+  const cursorOverrideUntil = cursorOverrideRaw ? new Date(cursorOverrideRaw) : null;
+  const cursorOverrideActive = cursorOverrideUntil && cursorOverrideUntil.getTime() > now.getTime();
+  lines.push(
+    `  Override: ${cursorOverrideActive ? `until ${cursorOverrideUntil?.toLocaleString()}` : "none"}`,
+  );
+  lines.push(
+    `  Exceptions: ${
+      config.cursor.excludeConversationIds.length > 0
+        ? config.cursor.excludeConversationIds.join(", ")
+        : "none"
+    }`,
+  );
+  return lines.join("\n");
+}
 
-  // Grok CLI is a fourth peer of Claude Code, Codex, and Cursor Agent.
-  lines.push("");
-  lines.push(await grokStatusSection(home, now));
+async function statusCommand(home = homedir()): Promise<void> {
+  const { config, warning } = loadConfigForRead(home);
+  const db = openLlmDb(home);
+  const now = new Date();
+  const header: string[] = ["llm-budget"];
+  if (warning) header.push(warning, "");
+  header.push(`Config: ${configPath(home)}`);
+  header.push(
+    `On unknown usage: ${config.enforcement.failClosed ? "block (failClosed)" : "allow (failClosed off)"}`,
+  );
+  process.stdout.write(`${header.join("\n")}\n`);
 
-  return `${lines.join("\n")}\n`;
+  // Fan out: claude/codex/copilot are fetched together (they share a cache),
+  // cursor and grok independently — each resolves its own latch as soon as
+  // its own data is ready so the printer isn't stuck waiting on the others.
+  const claudeLatch = createLatch<ProviderResult>();
+  const codexLatch = createLatch<ProviderResult>();
+  const copilotLatch = createLatch<ProviderResult>();
+  fetchDirectUsage({
+    home,
+    onProvider: (usage) => {
+      const result = { usage, error: null };
+      if (usage.providerId === "claude") claudeLatch.resolve(result);
+      else if (usage.providerId === "codex") codexLatch.resolve(result);
+      else if (usage.providerId === "copilot") copilotLatch.resolve(result);
+    },
+  })
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      const result = { usage: null, error: message };
+      claudeLatch.resolve(result);
+      codexLatch.resolve(result);
+      copilotLatch.resolve(result);
+    })
+    .then(() => {
+      // Belt-and-suspenders: a provider missing from the snapshot must not
+      // hang the printer forever.
+      const missing = { usage: null, error: null };
+      claudeLatch.resolve(missing);
+      codexLatch.resolve(missing);
+      copilotLatch.resolve(missing);
+    });
+
+  await streamInOrder(
+    [
+      async () => buildAgentSection("claude", config, db, home, now, await claudeLatch.promise),
+      async () => buildAgentSection("codex", config, db, home, now, await codexLatch.promise),
+      async () => buildCopilotSection(now, await copilotLatch.promise),
+      () => buildCursorSection(config, home, now),
+      () => grokStatusSection(home, now),
+    ],
+    200,
+  );
 }
 
 function overrideCommand(spec: string | undefined): string {
