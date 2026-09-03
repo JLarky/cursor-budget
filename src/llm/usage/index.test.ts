@@ -45,9 +45,11 @@ test("fetchDirectUsage returns both providers and caches the snapshot", async ()
     });
   };
   const first = await fetchDirectUsage({ home, platform: "linux", fetch });
-  assert.equal(first.providers.length, 2);
+  assert.equal(first.providers.length, 3);
   assert.equal(first.providers[0]?.providerId, "claude");
   assert.equal(first.providers[1]?.providerId, "codex");
+  assert.equal(first.providers[2]?.providerId, "copilot");
+  assert.equal(first.providers[2]?.status, "unavailable");
   const networkCalls = calls;
   const second = await fetchDirectUsage({ home, platform: "linux", fetch });
   assert.equal(calls, networkCalls);
