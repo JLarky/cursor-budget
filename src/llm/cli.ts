@@ -24,6 +24,7 @@ import {
 } from "./codex-install.js";
 import { handleCodexHook, readCodexHookEvent, CodexHookInputError, type CodexHookEvent } from "./codex-hook.js";
 import { buildMeasurements } from "./guard.js";
+import { buildCopilotMeasurements } from "./copilot-measurements.js";
 import { getState, openLlmDb, setState } from "./db.js";
 import { getCursorOverride } from "../db/client.js";
 import { configPath } from "../paths.js";
@@ -287,7 +288,7 @@ Optional legacy startup belt:
 const HELP = `llm-budget \u2014 percent-based guards for Claude Code, Codex, Cursor Agent, and Grok CLI
 
 Usage:
-  llm-budget                    Live status view for all four agents
+  llm-budget                    Live status for Claude, Codex, Copilot, Cursor, and Grok
   llm-budget status | usage     Same as the bare invocation
   llm-budget install            Register Claude, Codex, Cursor, and Grok guards
   llm-budget help               This text
@@ -388,6 +389,29 @@ async function statusCommand(home = homedir()): Promise<string> {
     lines.push(
       `  Exceptions: ${config.excludeSessionIds.length > 0 ? config.excludeSessionIds.join(", ") : "none"}`,
     );
+  }
+
+  lines.push("");
+  lines.push("GitHub Copilot:");
+  const copilot = snapshot ? providerUsage(snapshot, "copilot") : null;
+  if (!copilot && fetchError) {
+    lines.push(`  Usage unknown — ${fetchError}`);
+  } else if (!copilot) {
+    lines.push("  Usage unknown — no copilot entry");
+  } else if (copilot.status !== "available") {
+    lines.push(
+      `  Usage ${copilot.status}` + (copilot.error ? ` — ${copilot.error}` : ""),
+    );
+  } else {
+    if (copilot.planLabel) lines.push(`  Plan: ${copilot.planLabel}`);
+    const measurements = buildCopilotMeasurements(copilot);
+    if (measurements.length === 0) {
+      lines.push("  not metered on this plan");
+    } else {
+      for (const m of measurements) {
+        lines.push(`  ${formatWindowLine(m, now)}`);
+      }
+    }
   }
 
   // Cursor Agent is a peer of Claude Code and Codex in this view.

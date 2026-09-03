@@ -1,10 +1,10 @@
 # Status
 
-Status prints a live budget view for Claude Code, Codex, Cursor Agent, and Grok CLI: hook install state, usage windows when signed in, failClosed policy, and whether an override is active.
+Status prints a live budget view for Claude Code, Codex, GitHub Copilot, Cursor Agent, and Grok CLI: hook install state where a hook exists, usage windows when signed in, failClosed policy, and whether an override is active. Copilot is usage-only. It has no install or override lines.
 
 ## Sub-features
 
-- `status-combined` prints all four agent blocks from the bare invocation, `status`, and `usage`.
+- `status-combined` prints all five agent blocks from the bare invocation, `status`, and `usage`.
 - `status-uninstalled` reports hooks as not installed with the matching install command.
 - `status-cursor` prints the Cursor-only dashboard view.
 - `status-grok` prints the Grok-only weekly-credit view.
@@ -27,10 +27,10 @@ Preconditions:
 - Isolated HOME has no hook files yet.
 - No vendor login files exist under isolated HOME.
 
-- **Bare invocation.** Run `verify-llm-budget capture status/bare --` with no extra args. Exit `0`. stdout starts with `llm-budget`, includes `Config:` pointing at isolated HOME, `On unknown usage: block (failClosed)`, and headings `Claude Code:`, `Codex:`, `Cursor Agent:`, `Grok CLI:`. A trailing line tells the user to run `llm-budget help`.
+- **Bare invocation.** Run `verify-llm-budget capture status/bare --` with no extra args. Exit `0`. stdout starts with `llm-budget`, includes `Config:` pointing at isolated HOME, `On unknown usage: block (failClosed)`, and headings `Claude Code:`, `Codex:`, `GitHub Copilot:`, `Cursor Agent:`, `Grok CLI:`. A trailing line tells the user to run `llm-budget help`.
 - **status alias.** Run `verify-llm-budget capture status/status -- status`. Exit `0`. stdout matches the bare view except it does not include the help trailer.
 - **usage alias.** Run `verify-llm-budget capture status/usage -- usage`. Exit `0`. stdout contains `Cursor Agent:` and `Grok CLI:`.
-- **Uninstalled hooks.** In `status/status` stdout, Claude Code shows `Hooks: not installed — run llm-budget claude install`. Cursor Agent shows `Hooks: not installed — run llm-budget cursor install`. Grok CLI shows `Hooks: not installed — run llm-budget grok install`. Each agent block contains `Override: none`.
+- **Uninstalled hooks.** In `status/status` stdout, Claude Code shows `Hooks: not installed — run llm-budget claude install`. Cursor Agent shows `Hooks: not installed — run llm-budget cursor install`. Grok CLI shows `Hooks: not installed — run llm-budget grok install`. GitHub Copilot shows `Usage unavailable — GitHub Copilot is not signed in` and has no `Hooks:` line. Each guarded agent block (Claude, Codex, Cursor, Grok) contains `Override: none`.
 - **Cursor-only status.** Run `verify-llm-budget capture status/cursor -- cursor status`. Exit `0`. stdout starts with `llm-budget`, includes the same Config path, and `Usage: unavailable` (no Cursor auth in isolated HOME). It includes `Credential:` and `Override: none`.
 - **Grok-only status.** Run `verify-llm-budget capture status/grok -- grok status`. Exit `0`. stdout starts with `llm-budget`, includes the same Config path, and `Weekly: unavailable (usage unknown)` (no Grok auth in isolated HOME). It includes `Override: none` and `Exceptions: none`.
 - **Help.** Run `verify-llm-budget capture status/help -- help`. Exit `0`. stdout contains `llm-budget install`, `llm-budget claude help`, `llm-budget codex help`, `llm-budget cursor help`, `llm-budget grok help`, `llm-budget override `, `llm-budget cursor override `, and `llm-budget grok override `.
@@ -44,3 +44,4 @@ Preconditions:
 - On macOS, Claude usage can still read the real Keychain even with isolated HOME. Cursor and Codex auth stay under HOME. If Claude windows show real percents during status, you are seeing the user's Keychain, not the fixture.
 - `cursor status` and `grok status` are each a different layout from the combined view. Do not grep combined headings out of either.
 - Grok's `Weekly:` line distinguishes `0%` (xAI sent a number, or omitted the field and we treat that as 0 with a warning) from `unavailable` (auth missing or the request failed). Without Grok auth in isolated HOME, expect `unavailable`.
+- Copilot has no hooks. Isolated HOME shows `Usage unavailable — GitHub Copilot is not signed in`. Do not expect a `Hooks:` line in that block.
