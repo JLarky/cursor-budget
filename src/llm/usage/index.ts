@@ -35,6 +35,8 @@ export interface FetchDirectUsageOptions {
   codexHome?: string;
   copilotHome?: string;
   platform?: NodeJS.Platform;
+  /** Called as soon as each provider's usage is known, ahead of the combined return. */
+  onProvider?: (usage: ProviderUsage) => void;
 }
 
 function windowFromJson(value: JsonValue): UsageWindow {
@@ -107,13 +109,23 @@ export async function fetchDirectUsage(
   const db = options.db ?? openLlmDb(options.home);
   const cached = readCache(db);
   if (cached && !options.forceRefresh && isFresh(cached, now, ttl)) {
+    for (const provider of cached.providers) options.onProvider?.(provider);
     return cached;
   }
 
   const [claude, codex, copilot] = await Promise.all([
-    fetchClaudeUsage(options),
-    fetchCodexUsage(options),
-    fetchCopilotUsage(options),
+    fetchClaudeUsage(options).then((usage) => {
+      options.onProvider?.(usage);
+      return usage;
+    }),
+    fetchCodexUsage(options).then((usage) => {
+      options.onProvider?.(usage);
+      return usage;
+    }),
+    fetchCopilotUsage(options).then((usage) => {
+      options.onProvider?.(usage);
+      return usage;
+    }),
   ]);
   const snapshot: UsageSnapshot = {
     fetchedAt: now.toISOString(),
