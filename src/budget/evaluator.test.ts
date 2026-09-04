@@ -5,8 +5,10 @@ import {
   formatAge,
   formatResetCountdown,
   formatUsd,
+  formatWindowBar,
   formatWindowLine,
   parseResetRemaining,
+  renderProgressBar,
   type WindowMeasurement,
 } from "./evaluator.js";
 
@@ -353,4 +355,37 @@ test("parseResetRemaining and formatResetCountdown cover remaining buckets", () 
 
   assert.equal(parseResetRemaining("not-a-date", NOW).kind, "invalid");
   assert.equal(formatResetCountdown("not-a-date", NOW), "");
+});
+
+test("renderProgressBar fills proportionally and clamps out-of-range percents", () => {
+  assert.equal(renderProgressBar(0, 20), "[░░░░░░░░░░░░░░░░░░░░] 0%");
+  assert.equal(renderProgressBar(50, 20), "[██████████░░░░░░░░░░] 50%");
+  assert.equal(renderProgressBar(100, 20), "[████████████████████] 100%");
+  assert.equal(renderProgressBar(150, 20), "[████████████████████] 100%");
+  assert.equal(renderProgressBar(-10, 20), "[░░░░░░░░░░░░░░░░░░░░] 0%");
+});
+
+test("renderProgressBar puts the block marker on the last cell that fills before the threshold", () => {
+  // At exactly the block threshold, the marker must sit inside the filled
+  // region, not one cell past it — otherwise the bar reads as still under
+  // the limit at the exact point it actually blocks.
+  assert.equal(renderProgressBar(0, 20, 80), "[░░░░░░░░░░░░░░░|░░░░] 0%");
+  assert.equal(renderProgressBar(80, 20, 80), "[███████████████|░░░░] 80%");
+  assert.equal(renderProgressBar(90, 20, 80), "[███████████████|██░░] 90%");
+  assert.equal(renderProgressBar(100, 20, 80), "[███████████████|████] 100%");
+});
+
+test("formatWindowBar draws a bar only for measurable percents", () => {
+  assert.equal(
+    formatWindowBar(measurement({ usedPct: 42, blockAtPercent: null })),
+    "[████████░░░░░░░░░░░░] 42%",
+  );
+  assert.equal(
+    formatWindowBar(measurement({ usedPct: Number.NaN, usedDisplay: "unavailable" })),
+    null,
+  );
+  assert.equal(
+    formatWindowBar(measurement({ usedPct: Number.NaN, meter: { kind: "unmetered" } })),
+    null,
+  );
 });

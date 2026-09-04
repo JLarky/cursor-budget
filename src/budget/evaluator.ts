@@ -258,7 +258,13 @@ export function renderProgressBar(usedPct: number, width = 20, blockAtPercent?: 
   const filled = Math.round((clamped / 100) * width);
   const chars: string[] = Array.from({ length: width }, (_, i) => (i < filled ? "█" : "░"));
   if (blockAtPercent != null && Number.isFinite(blockAtPercent)) {
-    const markerIndex = Math.min(width - 1, Math.max(0, Math.round((blockAtPercent / 100) * width)));
+    // Same count-based fill formula as `filled`, minus one: puts the marker on the
+    // last cell that fills before crossing the threshold, so a bar at exactly
+    // blockAtPercent shows the marker inside the filled region, not past it.
+    const markerIndex = Math.min(
+      width - 1,
+      Math.max(0, Math.round((blockAtPercent / 100) * width) - 1),
+    );
     chars[markerIndex] = "|";
   }
   return `[${chars.join("")}] ${formatPercent(clamped)}`;

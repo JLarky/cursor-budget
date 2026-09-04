@@ -326,13 +326,13 @@ interface Latch<T> {
   resolve: (value: T) => void;
 }
 
-/** Resolves once, ignoring every resolve() after the first. */
 function pushWindowLines(lines: string[], m: WindowMeasurement, now: Date): void {
   lines.push(`  ${formatWindowLine(m, now)}`);
   const bar = formatWindowBar(m);
   if (bar) lines.push(`  ${bar}`);
 }
 
+/** Resolves once, ignoring every resolve() after the first. */
 function createLatch<T>(): Latch<T> {
   let settled = false;
   let resolveFn!: (value: T) => void;
