@@ -1,6 +1,7 @@
 import * as v from "valibot";
 import {
   formatPercent,
+  formatWindowBar,
   formatWindowLine,
   type WindowMeasurement,
 } from "../budget/evaluator.js";
@@ -239,7 +240,10 @@ export function renderGrokStatus(state: GateState, hooks: HookInstallState): rea
     lines.push("disabled in config");
     return lines;
   }
-  lines.push(renderWeeklyLine(state.weekly, state.gate, state.now));
+  const weeklyMeasured = weeklyMeasurement(state.weekly, state.gate);
+  lines.push(formatWindowLine(weeklyMeasured, state.now));
+  const weeklyBar = formatWindowBar(weeklyMeasured);
+  if (weeklyBar) lines.push(weeklyBar);
   if (state.weekly.percent.kind === "measured" && state.weekly.percent.source === "omittedPercent") {
     lines.push("Warning: xAI omitted weekly percent; treating as 0%");
   }
@@ -252,10 +256,6 @@ export function renderGrokStatus(state: GateState, hooks: HookInstallState): rea
     `Exceptions: ${state.exceptedSessionIds.length > 0 ? state.exceptedSessionIds.join(", ") : "none"}`,
   );
   return lines;
-}
-
-function renderWeeklyLine(weekly: GrokWeekly, gate: Gate, now: Date): string {
-  return formatWindowLine(weeklyMeasurement(weekly, gate), now);
 }
 
 function weeklyMeasurement(weekly: GrokWeekly, gate: Gate): WindowMeasurement {
