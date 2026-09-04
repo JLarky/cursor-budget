@@ -248,6 +248,28 @@ export function formatWindowLine(m: WindowMeasurement, now: Date = new Date()): 
   return `${m.label}: ${windowLineValue(m)} (${windowLineStatus(m)})${reset}`;
 }
 
+/**
+ * ASCII/block progress bar for a 0-100 percent, e.g. `[████████░░░░░░░░░░░░] 42%`.
+ * A finite `blockAtPercent` marks the enforced threshold in the bar with `|`,
+ * overlaying whichever fill character would otherwise sit there.
+ */
+export function renderProgressBar(usedPct: number, width = 20, blockAtPercent?: number | null): string {
+  const clamped = Math.max(0, Math.min(100, usedPct));
+  const filled = Math.round((clamped / 100) * width);
+  const chars: string[] = Array.from({ length: width }, (_, i) => (i < filled ? "█" : "░"));
+  if (blockAtPercent != null && Number.isFinite(blockAtPercent)) {
+    const markerIndex = Math.min(width - 1, Math.max(0, Math.round((blockAtPercent / 100) * width)));
+    chars[markerIndex] = "|";
+  }
+  return `[${chars.join("")}] ${formatPercent(clamped)}`;
+}
+
+/** Progress bar line for a window, or null if it has no meaningful percent to draw. */
+export function formatWindowBar(m: WindowMeasurement, width = 20): string | null {
+  if (resolvedMeter(m).kind !== "percent" || !Number.isFinite(m.usedPct)) return null;
+  return renderProgressBar(m.usedPct, width, m.blockAtPercent);
+}
+
 export function formatAge(ageMs: number): string {
   const ms = Number(ageMs);
   if (!Number.isFinite(ms) || ms < 0) return "unknown age";

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
-import { formatUsd, formatWindowLine } from "../budget/evaluator.js";
+import { formatUsd, formatWindowBar, formatWindowLine, type WindowMeasurement } from "../budget/evaluator.js";
 import { parseDuration } from "../budget/windows.js";
 import {
   ClaudeHookInputError,
@@ -327,6 +327,12 @@ interface Latch<T> {
 }
 
 /** Resolves once, ignoring every resolve() after the first. */
+function pushWindowLines(lines: string[], m: WindowMeasurement, now: Date): void {
+  lines.push(`  ${formatWindowLine(m, now)}`);
+  const bar = formatWindowBar(m);
+  if (bar) lines.push(`  ${bar}`);
+}
+
 function createLatch<T>(): Latch<T> {
   let settled = false;
   let resolveFn!: (value: T) => void;
@@ -386,7 +392,7 @@ function buildAgentSection(
       lines.push("  No usage windows reported yet");
     }
     for (const m of buildMeasurements(agent, config, provider)) {
-      lines.push(`  ${formatWindowLine(m, now)}`);
+      pushWindowLines(lines, m, now);
     }
   }
 
@@ -419,7 +425,7 @@ function buildCopilotSection(now: Date, result: ProviderResult): string {
       lines.push("  not metered on this plan");
     } else {
       for (const m of measurements) {
-        lines.push(`  ${formatWindowLine(m, now)}`);
+        pushWindowLines(lines, m, now);
       }
     }
   }
@@ -437,7 +443,7 @@ async function buildCursorSection(config: Config, home: string, now: Date): Prom
     const result = await getCursorPeriodUsage({ home, cacheTtlMs: config.cursor.cacheTtlMs, now });
     const plan = result.usage.planUsage;
     for (const m of buildCursorMeasurements(config, plan)) {
-      lines.push(`  ${formatWindowLine(m, now)}`);
+      pushWindowLines(lines, m, now);
     }
     lines.push(
       `  Period spend: ${
